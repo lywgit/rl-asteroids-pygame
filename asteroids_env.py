@@ -14,7 +14,8 @@ class AsteroidsEnv(gym.Env):
         obs_low = np.array([0, 0] + [0, 0]*5 + [0], dtype=np.float32)
         obs_high = np.array([self.game.width, self.game.height]*1 + [self.game.width, self.game.height]*5 + [np.inf], dtype=np.float32)
         self.observation_space = spaces.Box(low=obs_low, high=obs_high, dtype=np.float32)
-        self.action_space = spaces.Discrete(5)  # 0: nothing, 1: left, 2: right, 3: thrust, 4: shoot
+        # MultiBinary(5): [left, right, thrust, shoot, backward]
+        self.action_space = spaces.MultiBinary(5)
         self.render_mode = render_mode
         self.screen = None
         self.clock = None
@@ -29,6 +30,7 @@ class AsteroidsEnv(gym.Env):
         return obs, {}
 
     def step(self, action):
+        # action: array-like of 5 binary values [left, right, thrust, shoot, backward]
         self.game.step(action)
         obs = self._get_obs()
         reward = self._get_reward()
