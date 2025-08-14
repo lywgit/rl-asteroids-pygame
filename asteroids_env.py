@@ -10,10 +10,9 @@ class AsteroidsEnv(gym.Env):
     def __init__(self, render_mode=None):
         super().__init__()
         self.game = AsteroidsGame()
-        # Example: ship x, y; up to 5 asteroids (x, y each); score
-        obs_low = np.array([0, 0] + [0, 0]*5 + [0], dtype=np.float32)
-        obs_high = np.array([self.game.width, self.game.height]*1 + [self.game.width, self.game.height]*5 + [np.inf], dtype=np.float32)
-        self.observation_space = spaces.Box(low=obs_low, high=obs_high, dtype=np.float32)
+        # Observation is now the rendered RGB screen
+        self.observation_shape = (self.game.width, self.game.height, 3)
+        self.observation_space = spaces.Box(low=0, high=255, shape=self.observation_shape, dtype=np.uint8)
         # MultiBinary(5): [left, right, thrust, shoot, backward]
         self.action_space = spaces.MultiBinary(5)
         self.render_mode = render_mode
@@ -60,10 +59,17 @@ class AsteroidsEnv(gym.Env):
         self.clock = pygame.time.Clock()
 
     def _get_obs(self):
-        state = self.game.get_state()
-        # Pad asteroids to 5 for fixed obs size
-        asteroids = state['asteroids'][:5] + [[0,0]]*(5-len(state['asteroids']))
-        obs = np.array(list(state['player_pos']) + [coord for ast in asteroids for coord in ast] + [state['score']], dtype=np.float32)
+        # Render to an off-screen surface and return the RGB array
+        if self.screen is None or not isinstance(self.screen, pygame.Surface):
+            self._init_render()
+        if self.screen is None or not isinstance(self.screen, pygame.Surface):
+            raise RuntimeError("self.screen is not a valid pygame.Surface after initialization!")
+        # Draw the game to the screen (but don't flip)
+        self.game.render(self.screen)
+        # Get the RGB array (width, height, 3)
+        obs = pygame.surfarray.array3d(self.screen)
+        # Transpose to (height, width, 3) if needed by your RL framework
+        obs = np.transpose(obs, (1, 0, 2))
         return obs
 
     def _get_reward(self):
