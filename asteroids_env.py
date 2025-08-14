@@ -61,7 +61,7 @@ class AsteroidsEnv(gym.Env):
         state = self.game.get_state()
         # Pad asteroids to 5 for fixed obs size
         asteroids = state['asteroids'][:5] + [[0,0]]*(5-len(state['asteroids']))
-        obs = np.array(list(state['ship_pos']) + [coord for ast in asteroids for coord in ast] + [state['score']], dtype=np.float32)
+        obs = np.array(list(state['player_pos']) + [coord for ast in asteroids for coord in ast] + [state['score']], dtype=np.float32)
         return obs
 
     def _get_reward(self):
