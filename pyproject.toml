@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "asteroid>=0.7.0",
+    "gymnasium>=1.2.0",
     "pygame>=2.6.1",
     "torch>=2.8.0",
 ]
