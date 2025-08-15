@@ -64,6 +64,7 @@ class AsteroidsEnv(gym.Env):
 
     def _init_render(self):
         pygame.init()
+        pygame.font.init()  # Initialize font system for UI text
         self.screen = pygame.display.set_mode((self.game.width, self.game.height))
         pygame.display.set_caption("Asteroids AI (Gymnasium)")
         self.clock = pygame.time.Clock()
@@ -83,5 +84,19 @@ class AsteroidsEnv(gym.Env):
         return obs
 
     def _get_reward(self):
-        # Placeholder: reward = score
-        return float(self.game.score)
+        """Calculate reward including score and survival bonus"""
+        from .entities.constants import SURVIVAL_REWARD_PER_SECOND
+        
+        # Base reward from score (shooting asteroids)
+        score_reward = float(self.game.score)
+        
+        # Survival reward: reward for staying alive longer
+        # Give survival reward every second
+        survival_reward = 0.0
+        if self.game.game_time >= self.game.last_survival_reward_time + 1.0:
+            survival_reward = SURVIVAL_REWARD_PER_SECOND
+            self.game.last_survival_reward_time = self.game.game_time
+            self.game.total_survival_reward += survival_reward  # Update display counter
+        
+        total_reward = score_reward + survival_reward
+        return total_reward

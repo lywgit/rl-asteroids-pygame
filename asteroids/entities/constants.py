@@ -13,3 +13,10 @@ PLAYER_SHOT_SPEED = 500
 PLAYER_SHOOT_COOLDOWN = 0.3
 
 SHOT_RADIUS = 5
+
+# Reward system
+SURVIVAL_REWARD_PER_SECOND = 0.1  # Additional reward for surviving longer
+
+# Difficulty scaling
+LEVEL_DURATION = 120.0  # 2 minutes per level
+ASTEROID_SPEED_INCREASE_PER_LEVEL = 0.15  # 15% speed increase per level

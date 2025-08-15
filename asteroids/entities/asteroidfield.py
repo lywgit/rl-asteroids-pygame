@@ -30,6 +30,7 @@ class AsteroidField(pygame.sprite.Sprite):
     def __init__(self, *groups):
         super().__init__(*groups)
         self.spawn_timer = 0.0
+        self.speed_multiplier = 1.0  # Difficulty scaling multiplier
 
     def spawn(self, radius, position, velocity):
         asteroid = Asteroid(position.x, position.y, radius)
@@ -40,7 +41,7 @@ class AsteroidField(pygame.sprite.Sprite):
         if self.spawn_timer > ASTEROID_SPAWN_RATE:
             self.spawn_timer = 0
             edge = random.choice(self.edges)
-            speed = random.randint(40, 100)
+            speed = random.randint(40, 100) * self.speed_multiplier  # Apply difficulty scaling
             velocity = edge[0] * speed
             velocity = velocity.rotate(random.randint(-30, 30))
             position = edge[1](random.uniform(0, 1))
