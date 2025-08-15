@@ -1,6 +1,6 @@
 import time
 import gymnasium as gym
-from game.asteroids_env import AsteroidsEnv
+from asteroids.gym_env import AsteroidsEnv
 from models.mock_model import MockModel
 
 def play_game_with_model(env, model, render=True, max_steps=1000):
@@ -14,7 +14,7 @@ def play_game_with_model(env, model, render=True, max_steps=1000):
         total_reward += reward
         if render:
             env.render()
-            time.sleep(0.016)
+            # Removed time.sleep(0.016) - gym_env handles timing with clock.tick(60)
         step_count += 1
     print(f"Game finished. Total reward: {total_reward}")
     env.close()

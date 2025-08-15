@@ -1,7 +1,7 @@
 import time
 import gymnasium as gym
 import pygame
-from game.asteroids_env import AsteroidsEnv
+from asteroids.gym_env import AsteroidsEnv
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
             action[4] = 1  # shoot
         if not done:
             obs, reward, done, truncated, info = env.step(action)
-            time.sleep(0.016)
+            # Removed time.sleep(0.016) - gym_env handles timing with clock.tick(60)
         else:
             print(f"Game over! Score: {info['score']}")
             print("Press R to restart or close the window to exit.")

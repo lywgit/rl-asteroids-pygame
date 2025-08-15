@@ -1,11 +1,10 @@
-
-# --- Final AsteroidsGame using local asteroids_core classes ---
+# --- Final AsteroidsGame using local entities classes ---
 import pygame
-from asteroids_core.constants import SCREEN_WIDTH, SCREEN_HEIGHT
-from asteroids_core.player import Player
-from asteroids_core.asteroid import Asteroid
-from asteroids_core.shot import Shot
-from asteroids_core.asteroidfield import AsteroidField
+from .entities.constants import SCREEN_WIDTH, SCREEN_HEIGHT
+from .entities.player import Player
+from .entities.asteroid import Asteroid
+from .entities.shot import Shot
+from .entities.asteroidfield import AsteroidField
 
 class AsteroidsGame:
     def __init__(self, width=SCREEN_WIDTH, height=SCREEN_HEIGHT):
