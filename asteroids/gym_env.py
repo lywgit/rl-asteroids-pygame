@@ -26,7 +26,13 @@ class AsteroidsEnv(gym.Env):
         if self.render_mode == "human":
             self._init_render()
             self.render()
-        return obs, {"score": self.game.score}
+        return obs, {
+            "score": self.game.score,
+            "survival_reward": self.game.total_survival_reward,
+            "total_reward": self.game.score + self.game.total_survival_reward,
+            "level": self.game.current_level,
+            "game_time": self.game.game_time
+        }
 
     def step(self, action):
         # action: array-like of 5 binary values [thrust, backward, left, right, shoot]
@@ -36,7 +42,13 @@ class AsteroidsEnv(gym.Env):
             reward = 0.0
             terminated = True
             truncated = False
-            info = {"score": self.game.score}
+            info = {
+                "score": self.game.score,
+                "survival_reward": self.game.total_survival_reward,
+                "total_reward": self.game.score + self.game.total_survival_reward,
+                "level": self.game.current_level,
+                "game_time": self.game.game_time
+            }
             return obs, reward, terminated, truncated, info
 
         self.game.step(action)
@@ -44,7 +56,13 @@ class AsteroidsEnv(gym.Env):
         reward = self._get_reward()
         terminated = self.game.is_done()
         truncated = False
-        info = {"score": self.game.score}
+        info = {
+            "score": self.game.score,
+            "survival_reward": self.game.total_survival_reward,
+            "total_reward": self.game.score + self.game.total_survival_reward,
+            "level": self.game.current_level,
+            "game_time": self.game.game_time
+        }
         if self.render_mode == "human":
             self.render()
         return obs, reward, terminated, truncated, info

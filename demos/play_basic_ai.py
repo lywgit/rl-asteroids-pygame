@@ -16,7 +16,12 @@ def play_game_with_model(env, model, render=True, max_steps=1000):
             env.render()
             # Removed time.sleep(0.016) - gym_env handles timing with clock.tick(60)
         step_count += 1
-    print(f"Game finished. Total reward: {total_reward}")
+    print(f"Game finished!")
+    print(f"  Score (asteroids): {info['score'] if 'score' in info else 'N/A'}")
+    print(f"  Survival bonus: {info.get('survival_reward', 0):.1f}")
+    print(f"  Total reward: {total_reward:.1f}")
+    print(f"  Level reached: {info.get('level', 1)}")
+    print(f"  Time survived: {int(info.get('game_time', 0)//60):02d}:{int(info.get('game_time', 0)%60):02d}")
     env.close()
 
 if __name__ == "__main__":

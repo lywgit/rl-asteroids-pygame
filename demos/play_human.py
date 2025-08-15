@@ -34,7 +34,12 @@ def main():
             obs, reward, done, truncated, info = env.step(action)
             # Removed time.sleep(0.016) - gym_env handles timing with clock.tick(60)
         else:
-            print(f"Game over! Score: {info['score']}")
+            print(f"Game over!")
+            print(f"  Score (asteroids): {info['score']}")
+            print(f"  Survival bonus: {info['survival_reward']:.1f}")
+            print(f"  Total reward: {info['total_reward']:.1f}")
+            print(f"  Level reached: {info['level']}")
+            print(f"  Time survived: {int(info['game_time']//60):02d}:{int(info['game_time']%60):02d}")
             print("Press R to restart or close the window to exit.")
             time.sleep(0.1)
     env.close()
