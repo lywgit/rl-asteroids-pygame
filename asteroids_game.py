@@ -31,22 +31,22 @@ class AsteroidsGame:
         self.done = False
 
     def step(self, action):
-        # action: array-like of 5 binary values [left, right, thrust, shoot, backward]
-        # left
+        # action: array-like of 5 binary values [thrust, backward, left, right, shoot]
+        # thrust (forward)
         if action[0]:
+            self.player.move(self._dt)
+        # backward
+        if action[1]:
+            self.player.move(-self._dt)
+        # left
+        if action[2]:
             self.player.rotate(-self._dt)
         # right
-        if action[1]:
-            self.player.rotate(self._dt)
-        # thrust (forward)
-        if action[2]:
-            self.player.move(self._dt)
-        # shoot
         if action[3]:
+            self.player.rotate(self._dt)
+        # shoot
+        if action[4]:
             self.player.shoot()
-        # backward
-        if len(action) > 4 and action[4]:
-            self.player.move(-self._dt)
 
         self.updatable.update(self._dt)
 

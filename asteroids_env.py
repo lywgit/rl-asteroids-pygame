@@ -13,7 +13,7 @@ class AsteroidsEnv(gym.Env):
         # Observation is now the rendered RGB screen
         self.observation_shape = (self.game.width, self.game.height, 3)
         self.observation_space = spaces.Box(low=0, high=255, shape=self.observation_shape, dtype=np.uint8)
-        # MultiBinary(5): [left, right, thrust, shoot, backward]
+        # MultiBinary(5): [left, right, thrust, backward, shoot]
         self.action_space = spaces.MultiBinary(5)
         self.render_mode = render_mode
         self.screen = None
@@ -26,18 +26,28 @@ class AsteroidsEnv(gym.Env):
         if self.render_mode == "human":
             self._init_render()
             self.render()
-        return obs, {}
+        return obs, {"score": self.game.score}
 
     def step(self, action):
-        # action: array-like of 5 binary values [left, right, thrust, shoot, backward]
+        # action: array-like of 5 binary values [thrust, backward, left, right, shoot]
+        if self.game.is_done():
+            # If already done, ignore further steps until reset
+            obs = self._get_obs()
+            reward = 0.0
+            terminated = True
+            truncated = False
+            info = {"score": self.game.score}
+            return obs, reward, terminated, truncated, info
+
         self.game.step(action)
         obs = self._get_obs()
         reward = self._get_reward()
-        done = self.game.is_done()
-        info = {}
+        terminated = self.game.is_done()
+        truncated = False
+        info = {"score": self.game.score}
         if self.render_mode == "human":
             self.render()
-        return obs, reward, done, False, info
+        return obs, reward, terminated, truncated, info
 
     def render(self):
         if self.render_mode == "human":
