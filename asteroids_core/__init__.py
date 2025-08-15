@@ -1,0 +1,1 @@
+"""Asteroids core game components."""

@@ -1,5 +1,5 @@
 import numpy as np
-from asteroids_env import AsteroidsEnv
+from game.asteroids_env import AsteroidsEnv
 
 def test_observation_format():
     env = AsteroidsEnv(render_mode=None)

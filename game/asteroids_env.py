@@ -1,7 +1,7 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-from asteroids_game import AsteroidsGame
+from game.asteroids_game import AsteroidsGame
 import pygame
 
 class AsteroidsEnv(gym.Env):

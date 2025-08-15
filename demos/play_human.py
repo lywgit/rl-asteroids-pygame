@@ -1,7 +1,7 @@
 import time
 import gymnasium as gym
 import pygame
-from asteroids_env import AsteroidsEnv
+from game.asteroids_env import AsteroidsEnv
 
 
 def main():

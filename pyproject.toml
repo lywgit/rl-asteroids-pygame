@@ -1,7 +1,7 @@
 [project]
 name = "asteroids-ai"
 version = "0.1.0"
-description = "Add your description here"
+description = "Asteroids game with Gymnasium environment for RL training"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,7 +1,7 @@
 import time
 import gymnasium as gym
-from asteroids_env import AsteroidsEnv
-from mock_model import MockModel
+from game.asteroids_env import AsteroidsEnv
+from models.mock_model import MockModel
 
 def play_game_with_model(env, model, render=True, max_steps=1000):
     obs, info = env.reset()
