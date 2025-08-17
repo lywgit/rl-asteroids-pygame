@@ -18,10 +18,12 @@ class AsteroidsEnv(gym.Env):
         self.render_mode = render_mode
         self.screen = None
         self.clock = None
+        self.previous_score = 0  # Track previous score for incremental rewards
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.game.reset()
+        self.previous_score = 0  # Reset score tracking
         obs = self._get_obs()
         if self.render_mode == "human":
             self._init_render()
@@ -105,8 +107,10 @@ class AsteroidsEnv(gym.Env):
         """Calculate reward including score and survival bonus"""
         from .entities.constants import SURVIVAL_REWARD_PER_SECOND
         
-        # Base reward from score (shooting asteroids)
-        score_reward = float(self.game.score)
+        # Incremental score reward (change since last step)
+        current_score = self.game.score
+        score_reward = float(current_score - self.previous_score)
+        self.previous_score = current_score
         
         # Survival reward: reward for staying alive longer
         # Give survival reward every second
