@@ -74,6 +74,7 @@ class AsteroidsEnv(gym.Env):
             if self.screen is None:
                 self._init_render()
             self.game.render(self.screen)
+            pygame.display.flip()  # Update the display for human mode
             if self.clock is not None:
                 self.clock.tick(60)
 
@@ -85,23 +86,44 @@ class AsteroidsEnv(gym.Env):
     def _init_render(self):
         pygame.init()
         pygame.font.init()  # Initialize font system for UI text
-        self.screen = pygame.display.set_mode((self.game.width, self.game.height))
-        pygame.display.set_caption("Asteroids AI (Gymnasium)")
-        self.clock = pygame.time.Clock()
+        if self.render_mode == "human":
+            # Set window position to make it more visible
+            import os
+            os.environ['SDL_VIDEODRIVER'] = 'cocoa'  # Force Cocoa driver on macOS
+            os.environ['SDL_VIDEO_WINDOW_POS'] = '100,100'  # Position window at (100,100)
+            
+            self.screen = pygame.display.set_mode((self.game.width, self.game.height))
+            pygame.display.set_caption("🎮 Asteroids AI - Live Gameplay Demo")
+            self.clock = pygame.time.Clock()
+            
+            # Try to bring window to front
+            pygame.display.flip()
+        else:
+            # For rgb_array mode, create an off-screen surface (no window)
+            self.screen = pygame.Surface((self.game.width, self.game.height))
+            self.clock = pygame.time.Clock()
 
     def _get_obs(self):
-        # Render to an off-screen surface and return the RGB array
+        # Render to surface and return the RGB array
         if self.screen is None or not isinstance(self.screen, pygame.Surface):
             self._init_render()
         if self.screen is None or not isinstance(self.screen, pygame.Surface):
             raise RuntimeError("self.screen is not a valid pygame.Surface after initialization!")
-        # Draw the game to the screen (but don't flip)
-        self.game.render(self.screen)
+        # Draw the game to the screen (don't flip for off-screen rendering)
+        self._render_to_surface(self.screen)
         # Get the RGB array (width, height, 3)
         obs = pygame.surfarray.array3d(self.screen)
         # Transpose to (height, width, 3) if needed by your RL framework
         obs = np.transpose(obs, (1, 0, 2))
         return obs
+
+    def _render_to_surface(self, surface):
+        """Render game to surface without display updates"""
+        surface.fill((0, 0, 0))
+        for obj in self.game.drawable:
+            obj.draw(surface)
+        # Display score, level, and time on screen
+        self.game._draw_ui(surface)
 
     def _get_reward(self):
         """Calculate reward including score and survival bonus"""
