@@ -10,8 +10,8 @@ class AsteroidsEnv(gym.Env):
     def __init__(self, render_mode=None):
         super().__init__()
         self.game = AsteroidsGame()
-        # Observation is now the rendered RGB screen
-        self.observation_shape = (self.game.width, self.game.height, 3)
+        # Observation is the rendered RGB screen
+        self.observation_shape = (self.game.height, self.game.width, 3)
         self.observation_space = spaces.Box(low=0, high=255, shape=self.observation_shape, dtype=np.uint8)
         # MultiBinary(5): [left, right, thrust, backward, shoot]
         self.action_space = spaces.MultiBinary(5)
@@ -88,12 +88,12 @@ class AsteroidsEnv(gym.Env):
         pygame.font.init()  # Initialize font system for UI text
         if self.render_mode == "human":
             # Set window position to make it more visible
-            import os
-            os.environ['SDL_VIDEODRIVER'] = 'cocoa'  # Force Cocoa driver on macOS
-            os.environ['SDL_VIDEO_WINDOW_POS'] = '100,100'  # Position window at (100,100)
+            # import os
+            # os.environ['SDL_VIDEODRIVER'] = 'cocoa'  # Force Cocoa driver on macOS
+            # os.environ['SDL_VIDEO_WINDOW_POS'] = '100,100'  # Position window at (100,100)
             
             self.screen = pygame.display.set_mode((self.game.width, self.game.height))
-            pygame.display.set_caption("🎮 Asteroids AI - Live Gameplay Demo")
+            pygame.display.set_caption("🎮 Asteroids")
             self.clock = pygame.time.Clock()
             
             # Try to bring window to front

@@ -86,7 +86,7 @@ class AsteroidsGame:
     
     def _draw_ui(self, screen):
         """Draw UI elements like score, level, and time"""
-        font = pygame.font.Font(None, 36)
+        font = pygame.font.Font(None, 24)
         
         # Score
         score_text = font.render(f"Score: {self.score}", True, (255, 255, 255))
@@ -94,17 +94,17 @@ class AsteroidsGame:
         
         # Survival reward
         survival_text = font.render(f"Survival: {self.total_survival_reward:.1f}", True, (255, 255, 255))
-        screen.blit(survival_text, (10, 50))
+        screen.blit(survival_text, (10, 40))
         
         # Level
         level_text = font.render(f"Level: {self.current_level}", True, (255, 255, 255))
-        screen.blit(level_text, (10, 90))
+        screen.blit(level_text, (10, 70))
         
         # Time
         minutes = int(self.game_time // 60)
         seconds = int(self.game_time % 60)
         time_text = font.render(f"Time: {minutes:02d}:{seconds:02d}", True, (255, 255, 255))
-        screen.blit(time_text, (10, 130))
+        screen.blit(time_text, (10, 100))
     
     def _increase_difficulty(self):
         """Increase game difficulty by making asteroids faster"""
