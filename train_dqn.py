@@ -6,8 +6,8 @@ The goals are:
 
 """
 
-from csv import writer
-from turtle import speed
+import os
+from datetime import datetime
 import numpy as np
 import collections
 import matplotlib.pyplot as plt
@@ -181,9 +181,9 @@ class Agent:
         self.experience_buffer = buffer
         self.curr_obs = None
         self.episode_reward = 0.0
-        self._reset()
+        self.reset_env()
 
-    def _reset(self):
+    def reset_env(self):
         self.episode_reward = 0.0
         self.curr_obs, _ = self.env.reset()
 
@@ -208,7 +208,7 @@ class Agent:
         self.curr_obs = next_obs
         if is_done:
             episode_reward = self.episode_reward
-            self._reset()
+            self.reset_env()
 
         return episode_reward
 
@@ -218,30 +218,68 @@ def train(env, args):
     print("Using device:", device)
     
     # Initialize TensorBoard
-    writer = SummaryWriter(comment=f"-{args.game}")
-
+    
+    game = args.game
     buffer_size = args.replay_buffer_size
     max_steps = args.max_steps
     batch_size = args.batch_size
     learning_rate = args.learning_rate
-    epsilon_start = 1.0
-    epsilon_end = 0.1
-    epsilon_decay_frames = 100000
-    checkpoint_interval = 10000
-    gamma = 0.99
+    save_path = args.save_path if args.save_path else f"dqn_{args.game}.pth"
+    epsilon_start = args.epsilon_start
+    epsilon_end = args.epsilon_end
+    epsilon_decay_frames = args.epsilon_decay_frames
+    checkpoint_interval = args.checkpoint_interval
 
+    gamma = args.gamma
+
+    current_time = datetime.now().strftime("%b%d_%H-%M-%S")
+    writer = SummaryWriter(log_dir=f'runs/{game}/{current_time}')
+
+    hyperparameters = {
+        "game": game,
+        "buffer_size": buffer_size,
+        "max_steps": max_steps,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "epsilon_start": epsilon_start,
+        "epsilon_end": epsilon_end,
+        "epsilon_decay_frames": epsilon_decay_frames,
+        "gamma": gamma
+        }
+    metrics = {
+        "best_eval_reward": float("-inf")
+    }
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
     buffer = ExperienceBuffer(capacity=buffer_size)
     agent = Agent(env, buffer) # when agent play step, it updates the buffer
     net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
     tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 
+    # Load saved model if specified
+    if args.load_model:
+        try:
+            print(f"Loading model from: {args.load_model}")
+            checkpoint = torch.load(args.load_model, map_location=device)
+            net.load_state_dict(checkpoint)
+            tgt_net.load_state_dict(checkpoint)  # Start with same weights for target network
+            print("✅ Model loaded successfully")
+        except Exception as e:
+            print(f"❌ Error loading model: {e}")
+            print(f"❌ Failed to load model from: {args.load_model}")
+            print("❌ Training stopped. Please check the model path and try again.")
+            return
+
     # fill buffer before start training
-    print("Filling experience buffer...")
+    initial_experience_epsilon = args.epsilon_start
+    print(f"Filling initial experience buffer with epsilon {initial_experience_epsilon} ...")
     while len(buffer) < buffer_size:
-        if len(buffer) % (buffer_size // 10) == 0:
+        if len(buffer) % (buffer_size // 5) == 0:
             print(len(buffer))
-        agent.play_step(net, epsilon=1)
+        agent.play_step(net, epsilon=initial_experience_epsilon, device=device)
+    agent.reset_env()
     print("Experience buffer filled", len(buffer))
 
     # start training
@@ -277,15 +315,17 @@ def train(env, args):
                 # print("Target network updated")
 
             if frame_idx % checkpoint_interval == 0:
-                torch.save(net.state_dict(), f"dqn_{args.game}_{frame_idx}.pth")
+                base_name, ext = os.path.splitext(save_path)
+                checkpoint_path = f"{base_name}_frame_{frame_idx}{ext}"
+                torch.save(net.state_dict(), checkpoint_path)
 
             # update episode index 
             if episode_reward is not None:
                 episode_idx += 1
                 print(f"frame {frame_idx}, (episode {episode_idx}), reward {episode_reward:.2f}, epsilon {epsilon:.2f}")
                 # logs
-                writer.add_scalar("epsilon", epsilon, frame_idx)
-                writer.add_scalar("reward", episode_reward, frame_idx)
+                writer.add_scalar("train/epsilon", epsilon, frame_idx)
+                writer.add_scalar("train/reward", episode_reward, frame_idx)
 
             # evaluate with zero epsilon periodically
             if episode_reward is not None and episode_idx % 5 == 0:
@@ -300,13 +340,14 @@ def train(env, args):
                 print("Evaluation results:", mean_eval_reward, "best:", best_eval_reward)
                 if mean_eval_reward > best_eval_reward:
                     print("New best evaluation reward:", mean_eval_reward)
-                    torch.save(net.state_dict(), f"dqn_{args.game}_best.pth")
+                    torch.save(net.state_dict(), save_path)
                 best_eval_reward = max(best_eval_reward, mean_eval_reward)
-                writer.add_scalar("eval_reward", mean_eval_reward, frame_idx)
+                writer.add_scalar("eval/reward", mean_eval_reward, frame_idx)
 
     except KeyboardInterrupt:
         print("\n⚠️  Training interrupted by user")
     finally:
+        writer.add_hparams(hyperparameters, metrics)
         writer.close()
         env.close()
         print("Training complete")
@@ -319,6 +360,13 @@ def main():
     parser.add_argument('--replay_buffer_size', type=int, help='Replay buffer size', default=10000)
     parser.add_argument('--learning_rate', type=float, help='Learning rate', default=1e-4)
     parser.add_argument('--batch_size', type=int, help='Batch size', default=256)
+    parser.add_argument('--load_model', type=str, help='Path to saved model to continue training from')
+    parser.add_argument('--save_path', type=str, help='Path to save the trained model', default=None)
+    parser.add_argument('--epsilon_start', type=float, help='Initial epsilon value for exploration', default=1.0)
+    parser.add_argument('--epsilon_end', type=float, help='Final epsilon value for exploration', default=0.1)
+    parser.add_argument('--epsilon_decay_frames', type=int, help='Number of frames over which to decay epsilon', default=100000)
+    parser.add_argument('--checkpoint_interval', type=int, help='Interval (in frames) to save model checkpoints', default=10000)
+    parser.add_argument('--gamma', type=float, help='Discount factor for future rewards', default=0.99)
     args = parser.parse_args()
     print(args)
     # initialize environment
