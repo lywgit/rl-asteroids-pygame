@@ -12,6 +12,7 @@ from datetime import datetime
 import numpy as np
 import collections
 import matplotlib.pyplot as plt
+import yaml
 
 import gymnasium as gym
 import ale_py
@@ -39,6 +40,58 @@ def get_device():
     # Fallback to CPU
     else:
         return "cpu"
+
+
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file"""
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    return config
+
+
+def save_config_copy(config: dict, checkpoint_dir: Path) -> None:
+    """Save a copy of the configuration to the checkpoint directory"""
+    config_path = checkpoint_dir / "config.yaml"
+    
+    # Preserve the order from get_default_config()
+    default_config = get_default_config()
+    ordered_config = {}
+    
+    # First add all keys in the default order
+    for key in default_config.keys():
+        if key in config:
+            ordered_config[key] = config[key]
+    
+    # Then add any additional keys that might exist in config but not in default
+    for key, value in config.items():
+        if key not in ordered_config:
+            ordered_config[key] = value
+    
+    with open(config_path, 'w') as f:
+        yaml.dump(ordered_config, f, default_flow_style=False, indent=2, sort_keys=False)
+    print(f"Configuration saved to: {config_path}")
+
+
+def get_default_config() -> dict:
+    """Get default configuration values"""
+    return {
+        'game': 'beamrider',
+        'max_steps': 100000,
+        'replay_buffer_size': 100000,
+        'learning_rate': 0.0001,
+        'batch_size': 32,
+        'gamma': 0.99,
+        'epsilon_start': 1.0,
+        'epsilon_end': 0.1,
+        'epsilon_decay_frames': 100000,
+        'checkpoint_interval': 10000,
+        'load_model': None,
+        'comment': ''
+    }
     
 # game wrappers
 
@@ -60,11 +113,11 @@ class MultiBinaryToSingleDiscreteAction(gym.ActionWrapper):
     """Convert MultiBinary action space to Single discrete action for DQN compatibility"""
     def __init__(self, env):
         super().__init__(env)
-        self.action_space = gym.spaces.Discrete(env.action_space.n)
-        
+        self.action_space = gym.spaces.Discrete(env.action_space.n) # type: ignore
+
     def action(self, action: int):
         # Convert discrete action to MultiBinary
-        multi_binary_action = np.zeros(self.action_space.n, dtype=np.int32)
+        multi_binary_action = np.zeros(self.action_space.n, dtype=np.int32) # type: ignore
         multi_binary_action[action] = 1
         return multi_binary_action
 
@@ -214,21 +267,21 @@ class Agent:
         return episode_reward
 
 
-def train(env, args):
+def train(env, config):
     device = get_device()
     print("Using device:", device)
 
-    game = args.game
-    buffer_size = args.replay_buffer_size
-    max_steps = args.max_steps
-    batch_size = args.batch_size
-    learning_rate = args.learning_rate
-    epsilon_start = args.epsilon_start
-    epsilon_end = args.epsilon_end
-    epsilon_decay_frames = args.epsilon_decay_frames
-    checkpoint_interval = args.checkpoint_interval
-    comment = args.comment
-    gamma = args.gamma
+    game = config['game']
+    buffer_size = config['replay_buffer_size']
+    max_steps = config['max_steps']
+    batch_size = config['batch_size']
+    learning_rate = config['learning_rate']
+    epsilon_start = config['epsilon_start']
+    epsilon_end = config['epsilon_end']
+    epsilon_decay_frames = config['epsilon_decay_frames']
+    checkpoint_interval = config['checkpoint_interval']
+    comment = config['comment']
+    gamma = config['gamma']
 
     current_time = datetime.now().strftime("%Y-%m-%d-%H%M%S")
     run_id = f"{current_time}_{game}"
@@ -241,6 +294,9 @@ def train(env, args):
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save a copy of the configuration
+    save_config_copy(config, checkpoint_dir)
 
     writer = SummaryWriter(log_dir=log_dir)
 
@@ -268,21 +324,21 @@ def train(env, args):
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 
     # Load saved model if specified
-    if args.load_model:
+    if config.get('load_model'):
         try:
-            print(f"Loading model from: {args.load_model}")
-            checkpoint = torch.load(args.load_model, map_location=device)
+            print(f"Loading model from: {config['load_model']}")
+            checkpoint = torch.load(config['load_model'], map_location=device)
             net.load_state_dict(checkpoint)
             tgt_net.load_state_dict(checkpoint)  # Start with same weights for target network
             print("✅ Model loaded successfully")
         except Exception as e:
             print(f"❌ Error loading model: {e}")
-            print(f"❌ Failed to load model from: {args.load_model}")
+            print(f"❌ Failed to load model from: {config['load_model']}")
             print("❌ Training stopped. Please check the model path and try again.")
             return
 
     # fill buffer before start training
-    initial_experience_epsilon = args.epsilon_start
+    initial_experience_epsilon = config['epsilon_start']
     print(f"Filling initial experience buffer with epsilon {initial_experience_epsilon} ...")
     while len(buffer) < buffer_size:
         if len(buffer) % (buffer_size // 5) == 0:
@@ -311,7 +367,7 @@ def train(env, args):
             Q_target = rewards + gamma * tgt_net(next_obs).max(dim=1)[0] * (~dones) # if done set to 0
             Q_target = Q_target.detach() 
             # 2. current/predicted Q(s,a) = net(state)_action
-            Q_pred = net(obs).gather(1, actions.unsqueeze(-1)).squeeze(-1)
+            Q_pred = net(obs).gather(1, actions.unsqueeze(-1)).squeeze(-1)  # type: ignore
             # 3. loss
             loss = nn.MSELoss()(Q_pred, Q_target)
             optimizer.zero_grad()
@@ -368,30 +424,39 @@ def train(env, args):
 
 def main():
     parser = argparse.ArgumentParser(description='Train DQN agent on Beamrider or (not the standard) Asteroids game')
-    parser.add_argument('game', choices=['beamrider', 'asteroids'], help='Game to train on')
-    parser.add_argument('--max_steps', type=int, help='Maximum training steps', default=100000)
-    parser.add_argument('--replay_buffer_size', type=int, help='Replay buffer size', default=100000)
-    parser.add_argument('--learning_rate', type=float, help='Learning rate', default=1e-4)
-    parser.add_argument('--batch_size', type=int, help='Batch size', default=32)
-    parser.add_argument('--load_model', type=str, help='Path to saved model to continue training from')
-    parser.add_argument('--epsilon_start', type=float, help='Initial epsilon value for exploration', default=1.0)
-    parser.add_argument('--epsilon_end', type=float, help='Final epsilon value for exploration', default=0.1)
-    parser.add_argument('--epsilon_decay_frames', type=int, help='Number of frames over which to decay epsilon', default=100000)
-    parser.add_argument('--checkpoint_interval', type=int, help='Interval (in frames) to save model checkpoints', default=10000)
-    parser.add_argument('--gamma', type=float, help='Discount factor for future rewards', default=0.99)
-    parser.add_argument('--comment', type=str, default='', help='Comment for the training run')
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to YAML configuration file')
     args = parser.parse_args()
-    print(args)
-    # initialize environment
-    if args.game == 'asteroids':
+    
+    try:
+        config = load_config(args.config)
+        print(f"✅ Loaded configuration from: {args.config}")
+    except FileNotFoundError:
+        print(f"❌ Config file not found: {args.config}")
+        print("🔧 Creating default config.yaml...")
+        config = get_default_config()
+        with open('config.yaml', 'w') as f:
+            yaml.dump(config, f, default_flow_style=False, indent=2, sort_keys=False)
+        print("✅ Default config.yaml created. Please modify it as needed and run again.")
+        return
+    
+    print("Configuration:")
+    for key, value in config.items():
+        print(f"  {key}: {value}")
+    
+    # Validate configuration
+    if config['game'] not in ['beamrider', 'asteroids']:
+        print(f"❌ Invalid game: {config['game']}. Must be 'beamrider' or 'asteroids'")
+        return
+    
+    # Initialize environment
+    if config['game'] == 'asteroids':
         env = make_asteroids_env()
-    elif args.game == 'beamrider':
+    elif config['game'] == 'beamrider':
         env = make_atari_env("ALE/BeamRider-v5", grayscale_obs=True)
     else:
-        raise
+        raise ValueError(f"Unsupported game: {config['game']}")
 
-    train(env, args)
-
+    train(env, config)
 
 
 if __name__ == "__main__":

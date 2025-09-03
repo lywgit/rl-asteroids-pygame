@@ -34,11 +34,11 @@ class MultiBinaryToSingleDiscreteAction(gym.ActionWrapper):
     """Convert MultiBinary action space to Single discrete action for DQN compatibility"""
     def __init__(self, env):
         super().__init__(env)
-        self.action_space = gym.spaces.Discrete(env.action_space.n)
+        self.action_space = gym.spaces.Discrete(env.action_space.n) # type: ignore
         
     def action(self, action: int):
         # Convert discrete action to MultiBinary
-        multi_binary_action = np.zeros(self.action_space.n, dtype=np.int32)
+        multi_binary_action = np.zeros(self.action_space.n, dtype=np.int32) # type: ignore
         multi_binary_action[action] = 1
         return multi_binary_action
 
@@ -187,7 +187,7 @@ def main():
     
     print(f"📐 Environment info:")
     print(f"  - Observation space: {env.observation_space.shape}")
-    print(f"  - Action space: {env.action_space.n}")
+    print(f"  - Action space: {env.action_space.n}") # type: ignore
     
     # Load model
     try:
