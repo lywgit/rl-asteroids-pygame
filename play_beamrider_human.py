@@ -75,18 +75,3 @@ if __name__ == "__main__":
         print(f"❌ Error: {e}")
     
     print("✅ Game closed. Thanks for playing!")
-    print("🕹️  BeamRider Human Player")
-    print("Make sure you have pygame installed: pip install pygame")
-    
-    try:
-        play_beamrider_human()
-    except ImportError as e:
-        if "pygame" in str(e):
-            print("❌ pygame not found. Install it with:")
-            print("   uv add pygame")
-            print("   # or")
-            print("   pip install pygame")
-        else:
-            print(f"❌ Import error: {e}")
-    except Exception as e:
-        print(f"❌ Error: {e}")

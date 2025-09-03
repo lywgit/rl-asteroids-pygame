@@ -7,6 +7,7 @@ The goals are:
 """
 
 import os
+from pathlib import Path
 from datetime import datetime
 import numpy as np
 import collections
@@ -216,24 +217,32 @@ class Agent:
 def train(env, args):
     device = get_device()
     print("Using device:", device)
-    
-    # Initialize TensorBoard
-    
+
     game = args.game
     buffer_size = args.replay_buffer_size
     max_steps = args.max_steps
     batch_size = args.batch_size
     learning_rate = args.learning_rate
-    save_path = args.save_path if args.save_path else f"dqn_{args.game}.pth"
     epsilon_start = args.epsilon_start
     epsilon_end = args.epsilon_end
     epsilon_decay_frames = args.epsilon_decay_frames
     checkpoint_interval = args.checkpoint_interval
-
+    comment = args.comment
     gamma = args.gamma
 
-    current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-    writer = SummaryWriter(log_dir=f'runs/{game}/{current_time}')
+    current_time = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    run_id = f"{current_time}_{game}"
+    if comment:
+        run_id = f"{run_id}_{comment}"
+    print('Run ID:', run_id)
+
+    checkpoint_dir = Path('./checkpoints') / run_id
+    log_dir = Path('./runs') / run_id
+
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    writer = SummaryWriter(log_dir=log_dir)
 
     hyperparameters = {
         "game": game,
@@ -244,16 +253,16 @@ def train(env, args):
         "epsilon_start": epsilon_start,
         "epsilon_end": epsilon_end,
         "epsilon_decay_frames": epsilon_decay_frames,
-        "gamma": gamma
+        "gamma": gamma,
+        "frames": 0
         }
     metrics = {
         "best_eval_reward": float("-inf")
     }
 
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    
+
     buffer = ExperienceBuffer(capacity=buffer_size)
-    agent = Agent(env, buffer) # when agent play step, it updates the buffer
+    agent = Agent(env, buffer) # when agent play step, it updates the buffer by default
     net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
     tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
@@ -315,9 +324,8 @@ def train(env, args):
                 # print("Target network updated")
 
             if frame_idx % checkpoint_interval == 0:
-                base_name, ext = os.path.splitext(save_path)
-                checkpoint_path = f"{base_name}_frame_{frame_idx}{ext}"
-                torch.save(net.state_dict(), checkpoint_path)
+                checkpoint_path = checkpoint_dir / f"dqn_{frame_idx}.pth"
+                torch.save(net.state_dict(), str(checkpoint_path))
 
             # update episode index 
             if episode_reward is not None:
@@ -337,16 +345,21 @@ def train(env, args):
                         episode_reward = agent.play_step(net, epsilon=0, device=device, update_buffer=False)
                     rewards.append(episode_reward)
                 mean_eval_reward = sum(rewards) / len(rewards)
+                writer.add_scalar("eval/reward", mean_eval_reward, frame_idx)
                 print("Evaluation results:", mean_eval_reward, "best:", best_eval_reward)
                 if mean_eval_reward > best_eval_reward:
                     print("New best evaluation reward:", mean_eval_reward)
-                    torch.save(net.state_dict(), save_path)
+                    torch.save(net.state_dict(), checkpoint_dir / f"dqn_best.pth")
+                    hyperparameters['frames'] = frame_idx
+                    metrics["best_eval_reward"] = best_eval_reward
+                    writer.add_hparams(hyperparameters, metrics)
+                
                 best_eval_reward = max(best_eval_reward, mean_eval_reward)
-                writer.add_scalar("eval/reward", mean_eval_reward, frame_idx)
-
     except KeyboardInterrupt:
-        print("\n⚠️  Training interrupted by user")
+        print(f"\n⚠️  Training interrupted by user. Current frame: {frame_idx}")
     finally:
+        hyperparameters['frames'] = frame_idx
+        metrics["best_eval_reward"] = best_eval_reward
         writer.add_hparams(hyperparameters, metrics)
         writer.close()
         env.close()
@@ -357,16 +370,16 @@ def main():
     parser = argparse.ArgumentParser(description='Train DQN agent on Beamrider or (not the standard) Asteroids game')
     parser.add_argument('game', choices=['beamrider', 'asteroids'], help='Game to train on')
     parser.add_argument('--max_steps', type=int, help='Maximum training steps', default=100000)
-    parser.add_argument('--replay_buffer_size', type=int, help='Replay buffer size', default=10000)
+    parser.add_argument('--replay_buffer_size', type=int, help='Replay buffer size', default=100000)
     parser.add_argument('--learning_rate', type=float, help='Learning rate', default=1e-4)
-    parser.add_argument('--batch_size', type=int, help='Batch size', default=256)
+    parser.add_argument('--batch_size', type=int, help='Batch size', default=32)
     parser.add_argument('--load_model', type=str, help='Path to saved model to continue training from')
-    parser.add_argument('--save_path', type=str, help='Path to save the trained model', default=None)
     parser.add_argument('--epsilon_start', type=float, help='Initial epsilon value for exploration', default=1.0)
     parser.add_argument('--epsilon_end', type=float, help='Final epsilon value for exploration', default=0.1)
     parser.add_argument('--epsilon_decay_frames', type=int, help='Number of frames over which to decay epsilon', default=100000)
     parser.add_argument('--checkpoint_interval', type=int, help='Interval (in frames) to save model checkpoints', default=10000)
     parser.add_argument('--gamma', type=float, help='Discount factor for future rewards', default=0.99)
+    parser.add_argument('--comment', type=str, default='', help='Comment for the training run')
     args = parser.parse_args()
     print(args)
     # initialize environment
