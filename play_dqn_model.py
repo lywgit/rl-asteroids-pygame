@@ -1,6 +1,8 @@
 """
 Play script for DQN-trained models on Beamrider or Asteroids games.
-Loads a trained model and plays the game with human-viewable rendering.
+- Loads a trained model and plays the game with human-viewable rendering
+- Or see evaluation results faster without human-viewable rendering
+- Recording of gameplay videos.
 """
 
 import argparse
@@ -12,102 +14,12 @@ import torch
 import torch.nn as nn
 import gymnasium as gym
 import ale_py
-from gymnasium.wrappers import (
-    AtariPreprocessing, 
-    FrameStackObservation, 
-    MaxAndSkipObservation, 
-    ResizeObservation,
-    GrayscaleObservation,
-    RecordVideo
-)
-from asteroids.gym_env import AsteroidsEnv
+from gymnasium.wrappers import RecordVideo
 
-
-def get_device():
-    """Get the best available device for inference"""
-    if torch.cuda.is_available():
-        return "cuda"
-    elif torch.backends.mps.is_available():
-        return "mps"
-    else:
-        return "cpu"
-
-
-class MultiBinaryToSingleDiscreteAction(gym.ActionWrapper):
-    """Convert MultiBinary action space to Single discrete action for DQN compatibility"""
-    def __init__(self, env):
-        super().__init__(env)
-        self.action_space = gym.spaces.Discrete(env.action_space.n) # type: ignore
-        
-    def action(self, action: int):
-        # Convert discrete action to MultiBinary
-        multi_binary_action = np.zeros(self.action_space.n, dtype=np.int32) # type: ignore
-        multi_binary_action[action] = 1
-        return multi_binary_action
-
-class ScaleObservation(gym.ObservationWrapper):
-    """Scale pixel values to [0, 1]"""
-    def __init__(self, env: gym.Env):
-        assert isinstance(env.observation_space, gym.spaces.Box)
-        super().__init__(env)
-        self.observation_space = gym.spaces.Box(low=0, high=1, shape=env.observation_space.shape, dtype=np.float32)
-
-    def observation(self, observation):
-        return np.asarray(observation, dtype=np.float32) / 255.0
-    
-def make_atari_env(env_id: str, render_mode: str = "human", max_episode_steps: int = 10000, 
-                   screen_size=(84, 84), frame_stack: int = 4, scale_obs: bool = True, **kwargs):
-    """Create Atari environment with standard preprocessing"""
-    env = gym.make(env_id, render_mode=render_mode, max_episode_steps=max_episode_steps, frameskip=1) 
-    env = AtariPreprocessing(env, screen_size=screen_size, scale_obs=scale_obs,**kwargs)
-    if frame_stack > 1:
-        env = FrameStackObservation(env, frame_stack)
-    return env
-
-
-def make_asteroids_env(render_mode: str = "human", screen_size=(84, 84), 
-                      scale_obs:bool = True, grayscale_obs: bool = True, frame_stack: int = 4):
-    """Create Asteroids environment with preprocessing"""
-    env = AsteroidsEnv(render_mode=render_mode)
-    env = MaxAndSkipObservation(env, skip=4)
-    env = ResizeObservation(env, shape=screen_size)
-    if grayscale_obs:
-        env = GrayscaleObservation(env)
-    if scale_obs:
-        env = ScaleObservation(env)
-    if frame_stack > 1:
-        env = FrameStackObservation(env, frame_stack)
-    env = MultiBinaryToSingleDiscreteAction(env)
-    return env
-
-
-class AtariDQN(nn.Module):
-    """Q Learning network mapping pixel observations to action values"""
-    def __init__(self, input_shape, n_action):
-        super().__init__()
-        
-        self.conv = nn.Sequential(
-            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.ReLU()
-        )
-        conv_out = self._get_conv_out(input_shape)
-        self.fc = nn.Sequential(
-            nn.Linear(conv_out, 512),
-            nn.ReLU(),
-            nn.Linear(512, n_action)
-        )
-
-    def _get_conv_out(self, input_shape):
-        dummy = torch.zeros(1, *input_shape)
-        output = self.conv(dummy)
-        return output.view(1, -1).size(1)
-
-    def forward(self, x):
-        return self.fc(self.conv(x).view(x.size()[0], -1))
+# Import shared components
+from shared.models import AtariDQN
+from shared.environments import make_atari_env, make_asteroids_env
+from shared.utils import get_device
 
 
 def load_model(model_path: str, env, device: str):
@@ -118,7 +30,7 @@ def load_model(model_path: str, env, device: str):
     return model
 
 
-def play_game(env, model, device: str, num_episodes: int = 5, delay: float = 0.02):
+def play_game(env, model, device: str, num_episodes: int = 5, delay: float = 0.0):
     """Play the game using the trained model"""
     episode_rewards = []
     
@@ -182,8 +94,8 @@ def main():
     render_mode = "rgb_array" if args.no_render or args.record_video else "human"
 
     if args.game == 'asteroids':
-        env = make_asteroids_env(render_mode=render_mode)
-        print("🚀 Created Asteroids environment")
+        env = make_asteroids_env(render_mode=render_mode, action_mode="combination")
+        print("🚀 Created Asteroids environment. Should use correct action model: single or combination ")
     elif args.game == 'beamrider':
         env = make_atari_env("ALE/BeamRider-v5", render_mode=render_mode, grayscale_obs=True, max_episode_steps=100000)
         print("🛸 Created BeamRider environment")

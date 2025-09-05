@@ -1,11 +1,6 @@
 """
-This is my attempt to build the training process more or less by hand after some exploration
-The goals are:
-1. practice the process by hand for deeper understanding
-2. cleaner code
-
+DQN training script for Atari and Asteroids environments.
 """
-
 import os
 from pathlib import Path
 from datetime import datetime
@@ -16,30 +11,15 @@ import yaml
 
 import gymnasium as gym
 import ale_py
-from gymnasium.wrappers import (
-    AtariPreprocessing, 
-    FrameStackObservation, 
-    MaxAndSkipObservation, 
-    ResizeObservation,
-    GrayscaleObservation
-)
 from torch.utils.tensorboard import SummaryWriter
 import argparse
 import torch
 import torch.nn as nn
-from asteroids.gym_env import AsteroidsEnv
 
-
-def get_device():
-    # Check for CUDA (NVIDIA GPUs)
-    if torch.cuda.is_available():
-        return "cuda"
-    # Check for MPS (Apple Silicon GPUs)
-    elif torch.backends.mps.is_available():
-        return "mps"
-    # Fallback to CPU
-    else:
-        return "cpu"
+# Import shared components
+from shared.models import AtariDQN
+from shared.environments import make_atari_env, make_asteroids_env
+from shared.utils import get_device
 
 
 def load_config(config_path: str) -> dict:
@@ -94,117 +74,6 @@ def get_default_config() -> dict:
         'comment': ''
     }
     
-# game wrappers
-
-class MultiBinaryToDiscreteCombinationWrapper(gym.ActionWrapper):
-    """Convert MultiBinary action space to Discrete for DQN compatibility"""
-    def __init__(self, env):
-        super().__init__(env)
-        # For 5 binary actions, we have 2^5 = 32 possible combinations
-        self.n_combination = 2 ** env.action_space.n # type: ignore
-        self.action_space = gym.spaces.Discrete(self.n_combination)
-
-    def action(self, action):
-        # Convert discrete action to MultiBinary
-        binary_action = np.zeros(self.n_combination, dtype=np.int32)
-        for i in range(self.n_combination):
-            binary_action[i] = (action >> i) & 1
-        return binary_action
-    
-class MultiBinaryToSingleDiscreteAction(gym.ActionWrapper):
-    """Convert MultiBinary action space to Single discrete action for DQN compatibility"""
-    def __init__(self, env):
-        super().__init__(env)
-        self.action_space = gym.spaces.Discrete(env.action_space.n) # type: ignore
-
-    def action(self, action: int):
-        # Convert discrete action to MultiBinary
-        multi_binary_action = np.zeros(self.action_space.n, dtype=np.int32) # type: ignore
-        multi_binary_action[action] = 1
-        return multi_binary_action
-
-class ScaleObservation(gym.ObservationWrapper):
-    """Scale pixel values to [0, 1]"""
-    def __init__(self, env: gym.Env):
-        assert isinstance(env.observation_space, gym.spaces.Box)
-        super().__init__(env)
-        self.observation_space = gym.spaces.Box(low=0, high=1, shape=env.observation_space.shape, dtype=np.float32)
-
-    def observation(self, observation):
-        return np.asarray(observation, dtype=np.float32) / 255.0
-
-# env observation shape = (T, H, W, C)
-#  T frame stacking time dimension (squeeze if no frame stacking)
-#  C number of channels (squeezed for grayscale, 3 for RGB)
-# = (4, 84, 84) = (T, H, W) for default grayscale_obs=True frame_stack=4
-# = (4, 84, 84, 3) = (T, H, W, C) for grayscale_obs=False 
-# = (84, 84) for frame_stack=1 and grayscale_obs=True
-
-def make_atari_env(env_id:str, render_mode:str = "rgb_array", max_episode_steps:int = 10000, screen_size=(84,84),
-                   frame_stack:int = 4, scale_obs:bool = True,
-                   **kwargs):
-    env = gym.make(env_id, render_mode=render_mode, max_episode_steps=max_episode_steps, frameskip=1) 
-    # disable initial frame skipping because AtariPreprocessing does that, too
-    env = AtariPreprocessing(env, screen_size=screen_size, scale_obs=scale_obs, **kwargs) # kwargs ex: grayscale_obs = True
-    if frame_stack > 1:
-        env = FrameStackObservation(env, frame_stack)
-    return env
-
-def make_asteroids_env(render_mode:str = "rgb_array", screen_size=(84,84), grayscale_obs:bool = True, single_action:bool = False,
-                       scale_obs:bool = True, frame_stack:int = 4):
-    env = AsteroidsEnv(render_mode=render_mode)
-    env = MaxAndSkipObservation(env, skip=4)
-    env = ResizeObservation(env, shape=screen_size)
-    if grayscale_obs:
-        env = GrayscaleObservation(env)
-    if scale_obs:
-        env = ScaleObservation(env)
-    if frame_stack > 1:
-        env = FrameStackObservation(env, frame_stack)
-    if single_action:
-        env = MultiBinaryToSingleDiscreteAction(env)
-    else:
-        env = MultiBinaryToDiscreteCombinationWrapper(env)
-    return env
-
-
-# DQN network
-class AtariDQN(nn.Module):
-    """Q Learning network mapping pixel observations to action values"""
-    def __init__(self, input_shape, n_action):
-        # input_shape = (4, 84, 84)=(T, H, W) for grayscale_obs
-        # T is frame stacking time dimension
-        # Note:
-        # input shape (4, 84, 84)   -> conv output shape (64, 7, 7) -> flattened size 3136
-        # input shape (4, 128, 128) -> conv output shape (64, 12, 12) -> flattened size 9216
-
-        print("AtariDQN initialized with input shape:", input_shape)
-        super().__init__()
-
-        self.conv = nn.Sequential(
-            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.ReLU()
-        )
-        conv_out = self._get_conv_out(input_shape)
-        self.fc = nn.Sequential(
-            nn.Linear(conv_out, 512),
-            nn.ReLU(),
-            nn.Linear(512, n_action)
-        )
-
-    def _get_conv_out(self, input_shape):
-        dummy = torch.zeros(1, *input_shape)
-        output = self.conv(dummy)
-        # print("conv output size:", output.shape[1:])
-        return output.view(1, -1).size(1)
-
-    def forward(self, x):
-        return self.fc(self.conv(x).view(x.size()[0], -1))
-
 
 # Experience and replay buffer
 Experience = collections.namedtuple("Experience", ["obs", "action", "reward", "done", "next_obs"])
@@ -456,7 +325,7 @@ def main():
     
     # Initialize environment
     if config['game'] == 'asteroids':
-        env = make_asteroids_env(single_action=False) 
+        env = make_asteroids_env(action_mode="combination") # "combination" or "single"
     elif config['game'] == 'beamrider':
         env = make_atari_env("ALE/BeamRider-v5", grayscale_obs=True, max_episode_steps=100000)
     else:
