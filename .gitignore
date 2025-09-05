@@ -1,4 +1,8 @@
-.vscode
-.env
+.vscode/
+.venv/
 __pycache__/
-reference
+reference/
+runs/
+checkpoints/
+videos/
+.DS_Store

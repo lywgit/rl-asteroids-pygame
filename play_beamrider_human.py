@@ -13,10 +13,6 @@ import os
 import gymnasium as gym
 import ale_py
 
-# Add the project root to the path
-sys.path.append(os.path.abspath('.'))
-
-
 def play_beamrider_human():
     """Play BeamRider with human keyboard controls using official gymnasium.utils.play"""
     
@@ -33,8 +29,8 @@ def play_beamrider_human():
     print("=" * 50)
     
     # Register ALE environments
-    gym.register_envs(ale_py)
-    
+    gym.register_envs(ale_py) # "import ale_py" is actually enough
+
     # Create environment with rgb_array mode for gymnasium.utils.play
     env = gym.make("ALE/BeamRider-v5", render_mode='rgb_array', frameskip=1)
     

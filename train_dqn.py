@@ -89,6 +89,7 @@ def get_default_config() -> dict:
         'epsilon_end': 0.1,
         'epsilon_decay_frames': 100000,
         'checkpoint_interval': 10000,
+        'eval_episode_interval': 5,
         'load_model': None,
         'comment': ''
     }
@@ -100,12 +101,13 @@ class MultiBinaryToDiscreteCombinationWrapper(gym.ActionWrapper):
     def __init__(self, env):
         super().__init__(env)
         # For 5 binary actions, we have 2^5 = 32 possible combinations
-        self.action_space = gym.spaces.Discrete(32)
-        
+        self.n_combination = 2 ** env.action_space.n # type: ignore
+        self.action_space = gym.spaces.Discrete(self.n_combination)
+
     def action(self, action):
         # Convert discrete action to MultiBinary
-        binary_action = np.zeros(5, dtype=np.int32)
-        for i in range(5):
+        binary_action = np.zeros(self.n_combination, dtype=np.int32)
+        for i in range(self.n_combination):
             binary_action[i] = (action >> i) & 1
         return binary_action
     
@@ -148,7 +150,7 @@ def make_atari_env(env_id:str, render_mode:str = "rgb_array", max_episode_steps:
         env = FrameStackObservation(env, frame_stack)
     return env
 
-def make_asteroids_env(render_mode:str = "rgb_array", screen_size=(128,128), grayscale_obs:bool = True, 
+def make_asteroids_env(render_mode:str = "rgb_array", screen_size=(84,84), grayscale_obs:bool = True, single_action:bool = False,
                        scale_obs:bool = True, frame_stack:int = 4):
     env = AsteroidsEnv(render_mode=render_mode)
     env = MaxAndSkipObservation(env, skip=4)
@@ -159,7 +161,10 @@ def make_asteroids_env(render_mode:str = "rgb_array", screen_size=(128,128), gra
         env = ScaleObservation(env)
     if frame_stack > 1:
         env = FrameStackObservation(env, frame_stack)
-    env = MultiBinaryToSingleDiscreteAction(env)
+    if single_action:
+        env = MultiBinaryToSingleDiscreteAction(env)
+    else:
+        env = MultiBinaryToDiscreteCombinationWrapper(env)
     return env
 
 
@@ -280,6 +285,7 @@ def train(env, config):
     epsilon_end = config['epsilon_end']
     epsilon_decay_frames = config['epsilon_decay_frames']
     checkpoint_interval = config['checkpoint_interval']
+    eval_episode_interval = config['eval_episode_interval']
     comment = config['comment']
     gamma = config['gamma']
 
@@ -351,6 +357,7 @@ def train(env, config):
     frame_idx = 0
     episode_idx = 0
     best_eval_reward = float("-inf")
+    best_eval_reward_frame_idx = 0
     try:
         while frame_idx < max_steps:
             frame_idx += 1
@@ -383,40 +390,39 @@ def train(env, config):
                 checkpoint_path = checkpoint_dir / f"dqn_{frame_idx}.pth"
                 torch.save(net.state_dict(), str(checkpoint_path))
 
-            # update episode index 
+            # per episode operation 
             if episode_reward is not None:
                 episode_idx += 1
-                print(f"frame {frame_idx}, (episode {episode_idx}), reward {episode_reward:.2f}, epsilon {epsilon:.2f}")
                 # logs
+                print(f"frame {frame_idx}, (episode {episode_idx}), reward {episode_reward:.2f}, epsilon {epsilon:.2f}")
                 writer.add_scalar("train/epsilon", epsilon, frame_idx)
                 writer.add_scalar("train/reward", episode_reward, frame_idx)
 
-            # evaluate with zero epsilon periodically
-            if episode_reward is not None and episode_idx % 5 == 0:
-                print("Evaluating...")
-                rewards = []
-                for _ in range(5):
-                    episode_reward = None
-                    while episode_reward is None:
-                        episode_reward = agent.play_step(net, epsilon=0, device=device, update_buffer=False)
-                    rewards.append(episode_reward)
-                mean_eval_reward = sum(rewards) / len(rewards)
-                writer.add_scalar("eval/reward", mean_eval_reward, frame_idx)
-                print("Evaluation results:", mean_eval_reward, "best:", best_eval_reward)
-                if mean_eval_reward > best_eval_reward:
-                    print("New best evaluation reward:", mean_eval_reward)
-                    torch.save(net.state_dict(), checkpoint_dir / f"dqn_best.pth")
-                    hyperparameters['frames'] = frame_idx
-                    metrics["best_eval_reward"] = best_eval_reward
-                    writer.add_hparams(hyperparameters, metrics)
+                # evaluate deterministic (zero-epsilon) periodically
+                if episode_idx % eval_episode_interval == 0:
+                    print("Evaluating...")
+                    rewards = []
+                    for _ in range(5):
+                        episode_reward = None
+                        while episode_reward is None:
+                            episode_reward = agent.play_step(net, epsilon=0, device=device, update_buffer=False)
+                        rewards.append(episode_reward)
+                    mean_eval_reward = sum(rewards) / len(rewards)
+                    writer.add_scalar("eval/reward", mean_eval_reward, frame_idx)
+                    print("Evaluation results:", mean_eval_reward, "best:", best_eval_reward)
+
+                    if mean_eval_reward > best_eval_reward:
+                        best_eval_reward = max(best_eval_reward, mean_eval_reward)
+                        best_eval_reward_frame_idx = frame_idx
+                        print("New best evaluation reward:", mean_eval_reward, "checkpoint saved")
+                        torch.save(net.state_dict(), checkpoint_dir / f"dqn_best.pth")
                 
-                best_eval_reward = max(best_eval_reward, mean_eval_reward)
+                
     except KeyboardInterrupt:
         print(f"\n⚠️  Training interrupted by user. Current frame: {frame_idx}")
     finally:
-        hyperparameters['frames'] = frame_idx
         metrics["best_eval_reward"] = best_eval_reward
-        writer.add_hparams(hyperparameters, metrics)
+        writer.add_hparams(hyperparameters, metrics, global_step=best_eval_reward_frame_idx)
         writer.close()
         env.close()
         print("Training complete")
@@ -450,9 +456,9 @@ def main():
     
     # Initialize environment
     if config['game'] == 'asteroids':
-        env = make_asteroids_env()
+        env = make_asteroids_env(single_action=False) 
     elif config['game'] == 'beamrider':
-        env = make_atari_env("ALE/BeamRider-v5", grayscale_obs=True)
+        env = make_atari_env("ALE/BeamRider-v5", grayscale_obs=True, max_episode_steps=100000)
     else:
         raise ValueError(f"Unsupported game: {config['game']}")
 

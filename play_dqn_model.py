@@ -4,6 +4,8 @@ Loads a trained model and plays the game with human-viewable rendering.
 """
 
 import argparse
+import os
+from datetime import datetime
 import time
 import numpy as np
 import torch
@@ -15,7 +17,8 @@ from gymnasium.wrappers import (
     FrameStackObservation, 
     MaxAndSkipObservation, 
     ResizeObservation,
-    GrayscaleObservation
+    GrayscaleObservation,
+    RecordVideo
 )
 from asteroids.gym_env import AsteroidsEnv
 
@@ -62,7 +65,7 @@ def make_atari_env(env_id: str, render_mode: str = "human", max_episode_steps: i
     return env
 
 
-def make_asteroids_env(render_mode: str = "human", screen_size=(128, 128), 
+def make_asteroids_env(render_mode: str = "human", screen_size=(84, 84), 
                       scale_obs:bool = True, grayscale_obs: bool = True, frame_stack: int = 4):
     """Create Asteroids environment with preprocessing"""
     env = AsteroidsEnv(render_mode=render_mode)
@@ -166,7 +169,9 @@ def main():
                        help='Delay between steps in seconds (default: 0.0)')
     parser.add_argument('--no-render', action='store_true',
                        help='Run without rendering (for evaluation)')
-    
+    parser.add_argument('--record-video', action='store_true',
+                       help='Record video of the gameplay (will force render_mode rgb_array)')
+
     args = parser.parse_args()
     
     # Get device
@@ -174,17 +179,22 @@ def main():
     print(f"🔧 Using device: {device}")
     
     # Create environment
-    render_mode = "rgb_array" if args.no_render else "human"
-    
+    render_mode = "rgb_array" if args.no_render or args.record_video else "human"
+
     if args.game == 'asteroids':
         env = make_asteroids_env(render_mode=render_mode)
         print("🚀 Created Asteroids environment")
     elif args.game == 'beamrider':
-        env = make_atari_env("ALE/BeamRider-v5", render_mode=render_mode, grayscale_obs=True)
+        env = make_atari_env("ALE/BeamRider-v5", render_mode=render_mode, grayscale_obs=True, max_episode_steps=100000)
         print("🛸 Created BeamRider environment")
     else:
         raise ValueError(f"Unknown game: {args.game}")
-    
+
+    if args.record_video:
+        name_prefix = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.game}"
+        env = RecordVideo(env, video_folder="videos/", episode_trigger=lambda x: True, name_prefix=name_prefix)
+        os.makedirs("videos/", exist_ok=True)
+
     print(f"📐 Environment info:")
     print(f"  - Observation space: {env.observation_space.shape}")
     print(f"  - Action space: {env.action_space.n}") # type: ignore

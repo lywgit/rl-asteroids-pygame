@@ -15,7 +15,7 @@ PLAYER_SHOOT_COOLDOWN = 0.2
 SHOT_RADIUS = 5
 
 # Reward system
-SURVIVAL_REWARD_PER_SECOND = 1  # Additional reward for surviving longer
+SURVIVAL_REWARD_PER_SECOND = 0  # Additional reward for surviving longer
 
 # Difficulty scaling
 LEVEL_DURATION = 30.0  # 30 seconds per level
