@@ -9,14 +9,16 @@ from gymnasium.wrappers import (
     FrameStackObservation, 
     MaxAndSkipObservation, 
     ResizeObservation,
-    GrayscaleObservation
+    GrayscaleObservation,
+    ClipReward
 )
 from asteroids.gym_env import AsteroidsEnv
 from .wrappers import MultiBinaryToSingleDiscreteAction, MultiBinaryToDiscreteCombinationWrapper, ScaleObservation
 
 
 def make_atari_env(env_id: str, render_mode: str = "rgb_array", max_episode_steps: int = 10000, 
-                   screen_size=(84, 84), frame_stack: int = 4, scale_obs: bool = True, **kwargs):
+                   screen_size=(84, 84), frame_stack: int = 4, scale_obs: bool = True, 
+                   **kwargs):
     """
     Create Atari environment with standard preprocessing.
     
@@ -41,7 +43,8 @@ def make_atari_env(env_id: str, render_mode: str = "rgb_array", max_episode_step
 
 
 def make_asteroids_env(render_mode: str = "rgb_array", screen_size=(84, 84), grayscale_obs: bool = True, 
-                       scale_obs: bool = True, frame_stack: int = 4, action_mode: str = "single"):
+                       scale_obs: bool = True, frame_stack: int = 4, clip_reward: bool = False,
+                       action_mode: str = "single"):
     """
     Create Asteroids environment with preprocessing.
     
@@ -66,6 +69,8 @@ def make_asteroids_env(render_mode: str = "rgb_array", screen_size=(84, 84), gra
         env = ScaleObservation(env)
     if frame_stack > 1:
         env = FrameStackObservation(env, frame_stack)
+    if clip_reward:
+        env = ClipReward(env, -1, 1)
     
     # Action space conversion
     if action_mode == "single":
