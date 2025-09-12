@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 
 # Import shared components
-from shared.models import AtariDQN
+from shared.models import AtariDQN, AtariDuelingDQN
 from shared.environments import make_atari_env, make_asteroids_env
 from shared.utils import get_device
 
@@ -71,7 +71,9 @@ def get_default_config() -> dict:
         'checkpoint_interval': 10000,
         'eval_episode_interval': 5,
         'load_model': None,
-        'comment': ''
+        'comment': '',
+        'double_dqn': True,
+        'dueling_dqn': True
     }
     
 
@@ -142,6 +144,7 @@ class Agent:
 
 
 def train(env, config):
+    double_dqn = True # experimental
     device = get_device()
     print("Using device:", device)
 
@@ -155,6 +158,8 @@ def train(env, config):
     epsilon_decay_frames = config['epsilon_decay_frames']
     checkpoint_interval = config['checkpoint_interval']
     eval_episode_interval = config['eval_episode_interval']
+    double_dqn = config['double_dqn']
+    dueling_dqn = config.get('dueling_dqn', False)
     comment = config['comment']
     gamma = config['gamma']
 
@@ -185,7 +190,9 @@ def train(env, config):
         "epsilon_end": epsilon_end,
         "epsilon_decay_frames": epsilon_decay_frames,
         "gamma": gamma,
-        "frames": 0
+        "frames": 0,
+        "double_dqn": double_dqn,
+        "dueling_dqn": dueling_dqn
         }
     metrics = {
         "best_eval_reward": float("-inf")
@@ -194,8 +201,14 @@ def train(env, config):
 
     buffer = ExperienceBuffer(capacity=buffer_size)
     agent = Agent(env, buffer) # when agent play step, it updates the buffer by default
-    net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
-    tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
+
+    if dueling_dqn:
+        print("Using Dueling DQN architecture")
+        net = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
+        tgt_net = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
+    else:
+        net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
+        tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 
     # Load saved model if specified
@@ -240,8 +253,12 @@ def train(env, config):
             obs, actions, rewards, dones, next_obs = buffer.sample(batch_size=batch_size, as_torch_tensor=True, device=device)
             # train online network
             # 1. target/actual Q(s,a) = reward + gamma * max_a{tgt_net(next_state)}
-            Q_target = rewards + gamma * tgt_net(next_obs).max(dim=1)[0] * (~dones) # if done set to 0
-            Q_target = Q_target.detach() 
+            if double_dqn:
+                next_actions = net(next_obs).argmax(dim=1, keepdim=True)
+                Q_target = rewards + gamma * tgt_net(next_obs).gather(1, next_actions).squeeze(-1) * (~dones)
+            else:
+                Q_target = rewards + gamma * tgt_net(next_obs).max(dim=1)[0] * (~dones) # if done set to 0
+            Q_target = Q_target.detach()
             # 2. current/predicted Q(s,a) = net(state)_action
             Q_pred = net(obs).gather(1, actions.unsqueeze(-1)).squeeze(-1)  # type: ignore
             # 3. loss
@@ -325,7 +342,7 @@ def main():
     
     # Initialize environment
     if config['game'] == 'asteroids':
-        env = make_asteroids_env(action_mode="combination") # "combination" or "single"
+        env = make_asteroids_env(action_mode="combination", clip_reward=True) # "combination" or "single"
     elif config['game'] == 'beamrider':
         env = make_atari_env("ALE/BeamRider-v5", grayscale_obs=True, max_episode_steps=100000)
     else:

@@ -41,3 +41,40 @@ class AtariDQN(nn.Module):
 
     def forward(self, x):
         return self.fc(self.conv(x).view(x.size()[0], -1))
+
+
+class AtariDuelingDQN(nn.Module):
+    """Dueling DQN network: shared conv, separate value and advantage streams"""
+    def __init__(self, input_shape, n_action):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.ReLU()
+        )
+        conv_out = self._get_conv_out(input_shape)
+        self.value_stream = nn.Sequential(
+            nn.Linear(conv_out, 512),
+            nn.ReLU(),
+            nn.Linear(512, 1)
+        )
+        self.advantage_stream = nn.Sequential(
+            nn.Linear(conv_out, 512),
+            nn.ReLU(),
+            nn.Linear(512, n_action)
+        )
+
+    def _get_conv_out(self, input_shape):
+        dummy = torch.zeros(1, *input_shape)
+        output = self.conv(dummy)
+        return output.view(1, -1).size(1)
+
+    def forward(self, x):
+        x = self.conv(x).view(x.size(0), -1)
+        value = self.value_stream(x)
+        advantage = self.advantage_stream(x)
+        qvals = value + (advantage - advantage.mean(dim=1, keepdim=True))
+        return qvals
