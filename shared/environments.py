@@ -42,7 +42,7 @@ def make_atari_env(env_id: str, render_mode: str = "rgb_array", max_episode_step
     return env
 
 
-def make_asteroids_env(render_mode: str = "rgb_array", screen_size=(84, 84), grayscale_obs: bool = True, 
+def make_py_asteroids_env(render_mode: str = "rgb_array", screen_size=(84, 84), grayscale_obs: bool = True, 
                        scale_obs: bool = True, frame_stack: int = 4, clip_reward: bool = False,
                        action_mode: str = "single"):
     """

@@ -17,15 +17,19 @@ import ale_py
 from gymnasium.wrappers import RecordVideo
 
 # Import shared components
-from shared.models import AtariDQN
-from shared.environments import make_atari_env, make_asteroids_env
+from shared.models import AtariDQN, AtariDuelingDQN
+from shared.environments import make_atari_env, make_py_asteroids_env
 from shared.utils import get_device
 
 
 def load_model(model_path: str, env, device: str):
     """Load a trained DQN model"""
-    model = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    try:
+        model = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
+        model.load_state_dict(torch.load(model_path, map_location=device))
+    except Exception as e:
+        model = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
+        model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     return model
 
@@ -71,8 +75,8 @@ def play_game(env, model, device: str, num_episodes: int = 5, delay: float = 0.0
 
 def main():
     parser = argparse.ArgumentParser(description='Play DQN-trained agent on Beamrider or Asteroids')
-    parser.add_argument('game', choices=['beamrider', 'asteroids'], 
-                       help='Game to play (beamrider or asteroids)')
+    parser.add_argument('game', choices=['py-asteroids', 'beamrider', 'asteroids' ], 
+                       help='Game to play (py-asteroids, beamrider, asteroids)')
     parser.add_argument('--model', type=str, required=True,
                        help='Path to the trained model (.pth file)')
     parser.add_argument('--episodes', type=int, default=1,
@@ -93,12 +97,15 @@ def main():
     # Create environment
     render_mode = "rgb_array" if args.no_render or args.record_video else "human"
 
-    if args.game == 'asteroids':
-        env = make_asteroids_env(render_mode=render_mode, action_mode="combination")
-        print("🚀 Created Asteroids environment. Should use correct action model: single or combination ")
+    if args.game == 'py-asteroids':
+        env = make_py_asteroids_env(render_mode=render_mode, action_mode="combination")
+        print("🚀 Created Py-Asteroids environment. Should use correct action model: single or combination ")
     elif args.game == 'beamrider':
         env = make_atari_env("ALE/BeamRider-v5", render_mode=render_mode, grayscale_obs=True, max_episode_steps=100000)
         print("🛸 Created BeamRider environment")
+    elif args.game == 'asteroids':
+        env = make_atari_env("ALE/Asteroids-v5", render_mode=render_mode, grayscale_obs=True, max_episode_steps=100000)
+        print("🚀 Created Asteroids environment")
     else:
         raise ValueError(f"Unknown game: {args.game}")
 

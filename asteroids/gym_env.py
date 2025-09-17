@@ -133,14 +133,14 @@ class AsteroidsEnv(gym.Env):
         current_score = self.game.score
         score_reward = float(current_score - self.previous_score)
         self.previous_score = current_score
-        
-        # Survival reward: reward for staying alive longer
+        total_reward = score_reward         
+        # Survival reward: reward for staying alive longer (disabled when SURVIVAL_REWARD_PER_SECOND=0)
         # Give survival reward every second
-        survival_reward = 0.0
-        if self.game.game_time >= self.game.last_survival_reward_time + 1.0:
-            survival_reward = SURVIVAL_REWARD_PER_SECOND
-            self.game.last_survival_reward_time = self.game.game_time
-            self.game.total_survival_reward += survival_reward  # Update display counter
-        
-        total_reward = score_reward + survival_reward
+        if SURVIVAL_REWARD_PER_SECOND != 0.0:
+            survival_reward = 0.0
+            if self.game.game_time >= self.game.last_survival_reward_time + 1.0:
+                survival_reward = SURVIVAL_REWARD_PER_SECOND
+                self.game.last_survival_reward_time = self.game.game_time
+                self.game.total_survival_reward += survival_reward  # Update display counter
+            total_reward += survival_reward
         return total_reward

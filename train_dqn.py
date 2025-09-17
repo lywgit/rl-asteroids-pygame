@@ -18,7 +18,7 @@ import torch.nn as nn
 
 # Import shared components
 from shared.models import AtariDQN, AtariDuelingDQN
-from shared.environments import make_atari_env, make_asteroids_env
+from shared.environments import make_atari_env, make_py_asteroids_env
 from shared.utils import get_device
 
 
@@ -71,6 +71,9 @@ def get_default_config() -> dict:
         'checkpoint_interval': 10000,
         'eval_episode_interval': 5,
         'load_model': None,
+        'load_curl_checkpoint': None,  # Path to CURL pretrained encoder checkpoint
+        'freeze_curl_encoder': False,  # Whether to freeze CURL encoder during training
+        'load_replay_buffer': None,    # Path to pregenerated replay buffer (.h5 or .npz)
         'comment': '',
         'double_dqn': True,
         'dueling_dqn': True
@@ -78,6 +81,7 @@ def get_default_config() -> dict:
     
 
 # Experience and replay buffer
+# Note: use numpy arrays to store experiences (see Agent.play_step)
 Experience = collections.namedtuple("Experience", ["obs", "action", "reward", "done", "next_obs"])
 
 class ExperienceBuffer:
@@ -92,17 +96,167 @@ class ExperienceBuffer:
 
     def sample(self, batch_size:int, as_torch_tensor:bool = False, device='cpu'):
         indices = np.random.choice(len(self.buffer), batch_size, replace=False)
-        states, actions, rewards, dones, next_states = zip(*[self.buffer[idx] for idx in indices])
-        out = (
-            np.array(states, dtype=np.float32), 
-            np.array(actions, dtype=np.int64), 
-            np.array(rewards, dtype=np.float32), 
-            np.array(dones, dtype=np.bool), 
-            np.array(next_states, dtype=np.float32)
-            )
+        out = (np.stack(x) for x in zip(*[self.buffer[idx] for idx in indices]))
         if as_torch_tensor:
-            out =(torch.tensor(x, device=device) for x in out)
+            out = (torch.tensor(x, device=device) for x in out)
         return out
+    
+    def get_experience(self, index: int) -> Experience:
+        """Get a single experience by index for memory-efficient access"""
+        return self.buffer[index]
+    
+    def save_buffer_to_npz(self, file_path:str):
+        obs, action, reward, done, next_obs = (np.stack(x) for x in zip(*list(self.buffer)))
+        np.savez_compressed(file_path, obs=obs, action=action, reward=reward, done=done, next_obs=next_obs)
+        print(f"Save buffer to {file_path}, size : {len(self.buffer)}")
+
+    def load_buffer_from_npz(self, file_path:str):
+        with np.load(file_path) as data:
+            for exp in zip(data['obs'], data['action'], data['reward'], data['done'], data['next_obs']):
+                self.buffer.append(Experience(*exp))
+        print(f"Load buffer from {file_path}, size: {len(self.buffer)}")
+    
+    def save_buffer_to_hdf5(self, file_path: str):
+        """
+        Save buffer to HDF5 format for memory-efficient storage of large buffers.
+        HDF5 is more memory-efficient than npz for large datasets.
+        """
+        try:
+            import h5py
+        except ImportError:
+            raise ImportError("h5py is required for HDF5 support. Install with: pip install h5py")
+        
+        print(f"Saving buffer to HDF5: {file_path}, size: {len(self.buffer)}")
+        
+        with h5py.File(file_path, 'w') as f:
+            # Create datasets with compression
+            buffer_size = len(self.buffer)
+            
+            if buffer_size == 0:
+                print("Warning: Buffer is empty, creating minimal HDF5 file")
+                return
+            
+            # Get sample to determine shapes and dtypes
+            sample_exp = self.buffer[0]
+            obs_shape = sample_exp.obs.shape
+            obs_dtype = sample_exp.obs.dtype
+            
+            # Create datasets with chunking and compression for better performance
+            chunk_size = min(1000, buffer_size)  # Reasonable chunk size
+            
+            obs_dataset = f.create_dataset('obs', 
+                                         shape=(buffer_size,) + obs_shape, 
+                                         dtype=obs_dtype,
+                                         chunks=(chunk_size,) + obs_shape,
+                                         compression='gzip', 
+                                         compression_opts=6)
+            
+            action_dataset = f.create_dataset('action', 
+                                            shape=(buffer_size,), 
+                                            dtype=np.int64,
+                                            chunks=(chunk_size,),
+                                            compression='gzip',
+                                            compression_opts=6)
+            
+            reward_dataset = f.create_dataset('reward', 
+                                            shape=(buffer_size,), 
+                                            dtype=np.float32,
+                                            chunks=(chunk_size,),
+                                            compression='gzip',
+                                            compression_opts=6)
+            
+            done_dataset = f.create_dataset('done', 
+                                          shape=(buffer_size,), 
+                                          dtype=np.bool_,
+                                          chunks=(chunk_size,),
+                                          compression='gzip',
+                                          compression_opts=6)
+            
+            next_obs_dataset = f.create_dataset('next_obs', 
+                                              shape=(buffer_size,) + obs_shape, 
+                                              dtype=obs_dtype,
+                                              chunks=(chunk_size,) + obs_shape,
+                                              compression='gzip',
+                                              compression_opts=6)
+            
+            # Write data in chunks to avoid memory spikes
+            print("Writing data in chunks...")
+            for i in range(0, buffer_size, chunk_size):
+                end_idx = min(i + chunk_size, buffer_size)
+                chunk_experiences = [self.buffer[j] for j in range(i, end_idx)]
+                
+                # Stack the chunk data
+                chunk_obs = np.stack([exp.obs for exp in chunk_experiences])
+                chunk_actions = np.array([exp.action for exp in chunk_experiences])
+                chunk_rewards = np.array([exp.reward for exp in chunk_experiences])
+                chunk_dones = np.array([exp.done for exp in chunk_experiences])
+                chunk_next_obs = np.stack([exp.next_obs for exp in chunk_experiences])
+                
+                # Write chunk to datasets
+                obs_dataset[i:end_idx] = chunk_obs
+                action_dataset[i:end_idx] = chunk_actions
+                reward_dataset[i:end_idx] = chunk_rewards
+                done_dataset[i:end_idx] = chunk_dones
+                next_obs_dataset[i:end_idx] = chunk_next_obs
+                
+                if (i + chunk_size) % (chunk_size * 10) == 0:  # Progress every 10 chunks
+                    print(f"  Progress: {min(end_idx, buffer_size)}/{buffer_size}")
+            
+            # Store metadata
+            f.attrs['buffer_size'] = buffer_size
+            f.attrs['obs_shape'] = obs_shape
+            f.attrs['obs_dtype'] = str(obs_dtype)
+            
+        print(f"✅ Successfully saved buffer to HDF5: {file_path}")
+
+    def load_buffer_from_hdf5(self, file_path: str):
+        """
+        Load buffer from HDF5 format with memory-efficient streaming.
+        """
+        try:
+            import h5py
+        except ImportError:
+            raise ImportError("h5py is required for HDF5 support. Install with: pip install h5py")
+        
+        # print(f"Loading buffer from HDF5: {file_path}")
+        
+        with h5py.File(file_path, 'r') as f:
+            buffer_size = f.attrs['buffer_size']
+            print(f"Buffer size in file: {buffer_size}")
+            
+            # Clear existing buffer
+            self.buffer.clear()
+            
+            # Load data in chunks to avoid memory spikes
+            chunk_size = min(1000, buffer_size)
+            
+            print("Loading data in chunks...")
+            for i in range(0, buffer_size, chunk_size):
+                end_idx = min(i + chunk_size, buffer_size)
+                
+                # Read chunk data
+                chunk_obs = f['obs'][i:end_idx]
+                chunk_actions = f['action'][i:end_idx]
+                chunk_rewards = f['reward'][i:end_idx]
+                chunk_dones = f['done'][i:end_idx]
+                chunk_next_obs = f['next_obs'][i:end_idx]
+                
+                # Convert to experiences and append
+                for j in range(len(chunk_obs)):
+                    exp = Experience(
+                        obs=chunk_obs[j],
+                        action=chunk_actions[j],
+                        reward=chunk_rewards[j],
+                        done=chunk_dones[j],
+                        next_obs=chunk_next_obs[j]
+                    )
+                    self.buffer.append(exp)
+                
+                if (i + chunk_size) % (chunk_size * 10) == 0:  # Progress every 10 chunks
+                    print(f"  Progress: {min(end_idx, buffer_size)}/{buffer_size}")
+        
+        print(f"✅ Successfully loaded buffer from HDF5: {file_path}, final size: {len(self.buffer)}")
+
 
 # Agent: handle interaction with environment and keep experience buffer for replay
 class Agent:
@@ -118,7 +272,7 @@ class Agent:
         self.curr_obs, _ = self.env.reset()
 
     def play_step(self, net:nn.Module, epsilon:float = 0.0, device:str="cpu", update_buffer=True) -> None | float:
-        episode_reward = None
+        episode_reward = None # return cumulated episode_reward when episode ends else None
         # choose an action
         if np.random.random() < epsilon:
             action = self.env.action_space.sample()
@@ -133,8 +287,16 @@ class Agent:
         self.episode_reward += reward # type: ignore
 
         # update experience buffer
-        if update_buffer:
-            self.experience_buffer.append(Experience(self.curr_obs, action, reward, is_done, next_obs))
+        # limit data type to np.int64, np.float32, np.bool for consistency
+        if update_buffer and self.curr_obs is not None:
+            exp = Experience(
+                np.array(self.curr_obs, dtype=np.float32), 
+                np.array(action, dtype=np.int64), 
+                np.array(reward, dtype=np.float32), 
+                np.array(is_done, dtype=np.bool), 
+                np.array(next_obs, dtype=np.float32)
+            )
+            self.experience_buffer.append(exp)
         self.curr_obs = next_obs
         if is_done:
             episode_reward = self.episode_reward
@@ -211,7 +373,7 @@ def train(env, config):
         tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 
-    # Load saved model if specified
+    # Load saved model or curl pretrained encoder if specified
     if config.get('load_model'):
         try:
             print(f"Loading model from: {config['load_model']}")
@@ -224,16 +386,103 @@ def train(env, config):
             print(f"❌ Failed to load model from: {config['load_model']}")
             print("❌ Training stopped. Please check the model path and try again.")
             return
+        
+    if config.get('load_curl_checkpoint'):
+        try:
+            print(f"Loading CURL pretrained encoder from: {config['load_curl_checkpoint']}")
+            curl_checkpoint = torch.load(config['load_curl_checkpoint'], map_location=device, weights_only=False)
+            curl_state_dict = curl_checkpoint['encoder_state_dict']
+            
+            # Extract convolutional weights from CURL encoder
+            conv_state_dict = {}
+            for key, value in curl_state_dict.items():
+                if key.startswith('conv.'):
+                    # The key already matches DQN model structure (conv.0.weight, conv.2.weight, etc.)
+                    conv_state_dict[key] = value
+            
+            # Load weights into DQN model's convolutional layers
+            dqn_state_dict = net.state_dict()
+            loaded_layers = []
+            missed_layers = []
+            
+            for key in conv_state_dict:
+                if key in dqn_state_dict:
+                    if conv_state_dict[key].shape == dqn_state_dict[key].shape:
+                        dqn_state_dict[key] = conv_state_dict[key]
+                        loaded_layers.append(key)
+                    else:
+                        missed_layers.append(f"{key} (shape mismatch)")
+                else:
+                    missed_layers.append(f"{key} (not found)")
+            
+            # Load the updated state dict into the network
+            net.load_state_dict(dqn_state_dict)
+            
+            # Also load into target network to maintain consistency
+            tgt_net.load_state_dict(dqn_state_dict)
+            
+            # Print loading summary
+            total_conv_params = sum(p.numel() for name, p in net.named_parameters() if name.startswith('conv.'))
+            loaded_conv_params = sum(conv_state_dict[key].numel() for key in loaded_layers)
+            
+            print(f"✅ CURL encoder loaded successfully!")
+            print(f"   Loaded layers: {len(loaded_layers)}")
+            print(f"   Missed layers: {len(missed_layers)}")
+            if missed_layers:
+                print(f"   Missed: {missed_layers}")
+            print(f"   Conv parameters loaded: {loaded_conv_params}/{total_conv_params}")
+            print(f"   CURL epoch: {curl_checkpoint.get('epoch', 'unknown')}")
+            
+            # Optionally freeze encoder layers if specified
+            if config.get('freeze_curl_encoder', False):
+                frozen_params = 0
+                for name, param in net.named_parameters():
+                    if name.startswith('conv.'):
+                        param.requires_grad = False
+                        frozen_params += param.numel()
+                
+                # Also freeze target network parameters (though they don't have gradients anyway)
+                for name, param in tgt_net.named_parameters():
+                    if name.startswith('conv.'):
+                        param.requires_grad = False
+                
+                print(f"🔒 Froze {frozen_params} encoder parameters")
+            else:
+                print("🔓 Encoder layers will be fine-tuned during training")
+                
+        except Exception as e:
+            print(f"❌ Error loading CURL checkpoint: {e}")
+            print(f"❌ Failed to load CURL checkpoint from: {config['load_curl_checkpoint']}")
+            print("❌ Training stopped. Please check the CURL checkpoint path and try again.")
+            return
 
-    # fill buffer before start training
-    initial_experience_epsilon = config['epsilon_start']
-    print(f"Filling initial experience buffer with epsilon {initial_experience_epsilon} ...")
-    while len(buffer) < buffer_size:
-        if len(buffer) % (buffer_size // 5) == 0:
-            print(len(buffer))
-        agent.play_step(net, epsilon=initial_experience_epsilon, device=device)
-    agent.reset_env()
-    print("Experience buffer filled", len(buffer))
+
+    # fill (or load) buffer before start training
+    if config.get('load_replay_buffer'):
+        try:
+            buffer_path = config['load_replay_buffer']
+            print(f"Loading replay buffer from: {buffer_path}")
+            if buffer_path.endswith('.h5') or buffer_path.endswith('.hdf5'):
+                buffer.load_buffer_from_hdf5(buffer_path)
+            elif buffer_path.endswith('.npz'):
+                buffer.load_buffer_from_npz(buffer_path)
+            else:
+                raise ValueError("Unsupported buffer file format. Use .h5 or .npz")
+            print("✅ Replay buffer loaded successfully")
+        except Exception as e:
+            print(f"❌ Error loading replay buffer: {e}")
+            print(f"❌ Failed to load replay buffer from: {config['load_replay_buffer']}")
+            print("❌ Training stopped. Please check the buffer path and try again.")
+            return
+    else:
+        initial_experience_epsilon = config['epsilon_start']
+        print(f"Filling initial experience buffer with epsilon {initial_experience_epsilon} ...")
+        while len(buffer) < buffer_size:
+            if len(buffer) % (buffer_size // 5) == 0:
+                print(len(buffer))
+            agent.play_step(net, epsilon=initial_experience_epsilon, device=device)
+        agent.reset_env()
+        print("Experience buffer filled", len(buffer))
 
     # start training
     frame_idx = 0
@@ -336,15 +585,17 @@ def main():
         print(f"  {key}: {value}")
     
     # Validate configuration
-    if config['game'] not in ['beamrider', 'asteroids']:
-        print(f"❌ Invalid game: {config['game']}. Must be 'beamrider' or 'asteroids'")
+    if config['game'] not in ['py-asteroids', 'beamrider', 'asteroids']:
+        print(f"❌ Invalid game: {config['game']}. Must be 'py-asteroids', 'beamrider' or 'asteroids'")
         return
     
     # Initialize environment
-    if config['game'] == 'asteroids':
-        env = make_asteroids_env(action_mode="combination", clip_reward=True) # "combination" or "single"
+    if config['game'] == 'py-asteroids':
+        env = make_py_asteroids_env(action_mode="combination", clip_reward=True) # "combination" or "single"
     elif config['game'] == 'beamrider':
         env = make_atari_env("ALE/BeamRider-v5", grayscale_obs=True, max_episode_steps=100000)
+    elif config['game'] == 'asteroids':
+        env = make_atari_env("ALE/Asteroids-v5", grayscale_obs=True, max_episode_steps=100000)
     else:
         raise ValueError(f"Unsupported game: {config['game']}")
 

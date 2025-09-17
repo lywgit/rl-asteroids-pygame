@@ -12,8 +12,10 @@ import sys
 import os
 import gymnasium as gym
 import ale_py
+from gymnasium.utils.play import play
+import pygame
 
-def play_beamrider_human():
+def play_atari_human(game:str):
     """Play BeamRider with human keyboard controls using official gymnasium.utils.play"""
     
     print("🎮 BeamRider - Human Player Mode (Official)")
@@ -32,11 +34,15 @@ def play_beamrider_human():
     gym.register_envs(ale_py) # "import ale_py" is actually enough
 
     # Create environment with rgb_array mode for gymnasium.utils.play
-    env = gym.make("ALE/BeamRider-v5", render_mode='rgb_array', frameskip=1)
-    
+    if game == 'beamrider':
+        env = gym.make("ALE/BeamRider-v5", render_mode='rgb_array', frameskip=1)
+    elif game == 'asteroids':
+        env = gym.make("ALE/Asteroids-v5", render_mode='rgb_array', frameskip=1)
+    else:
+        raise ValueError(f"Unsupported game: {game}")
+
     # Use official gymnasium.utils.play function
-    from gymnasium.utils.play import play
-    import pygame
+  
     
     # Define key mappings (key -> action_id)
     # You can use characters, pygame constants, or tuples
@@ -63,10 +69,13 @@ def play_beamrider_human():
 
 
 if __name__ == "__main__":
-    print("🕹️  BeamRider Human Player (Official)")
-    
+    import argparse
+    parser = argparse.ArgumentParser(description='Play Atari (BeamRider, Asteroids manually with keyboard controls')
+    parser.add_argument('game', choices=['beamrider', 'asteroids'])
+    args = parser.parse_args()
+
     try:
-        play_beamrider_human()
+        play_atari_human(args.game)
     except Exception as e:
         print(f"❌ Error: {e}")
     
