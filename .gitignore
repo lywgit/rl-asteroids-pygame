@@ -1,8 +1,10 @@
 .vscode/
 .venv/
+.DS_Store
 __pycache__/
 reference/
 runs/
 checkpoints/
 videos/
-.DS_Store
+*.h5
+*.npz
