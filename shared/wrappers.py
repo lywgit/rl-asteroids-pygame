@@ -4,6 +4,7 @@ Gymnasium environment wrappers for action space conversion and observation prepr
 
 import numpy as np
 import gymnasium as gym
+from collections import deque
 
 
 class MultiBinaryToSingleDiscreteAction(gym.ActionWrapper):
@@ -44,3 +45,30 @@ class ScaleObservation(gym.ObservationWrapper):
 
     def observation(self, observation):
         return np.asarray(observation, dtype=np.float32) / 255.0
+
+class MaxRender(gym.Wrapper):
+    def __init__(self, env, capacity=2):
+        super().__init__(env)
+        self._frame_queue = deque(maxlen=capacity)
+
+    def reset(self, **kwargs):
+        self._frame_queue.clear()
+        obs, info = super().reset(**kwargs)
+        frame = self.env.render()
+        if frame is not None:
+            self._frame_queue.append(frame)
+        return obs, info
+
+    def render(self):
+        frame = self.env.render()
+        if frame is None:
+            return None
+
+        self._frame_queue.append(frame)
+
+        if len(self._frame_queue) == 1:
+            return self._frame_queue[0]
+
+        # pixel-wise max over all frames in the queue
+        max_frame = np.maximum.reduce(list(self._frame_queue))
+        return max_frame

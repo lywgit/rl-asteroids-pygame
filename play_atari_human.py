@@ -14,21 +14,10 @@ import gymnasium as gym
 import ale_py
 from gymnasium.utils.play import play
 import pygame
+from shared.wrappers import MaxRender
 
 def play_atari_human(game:str):
-    """Play BeamRider with human keyboard controls using official gymnasium.utils.play"""
-    
-    print("🎮 BeamRider - Human Player Mode (Official)")
-    print("=" * 50)
-    print("Controls:")
-    print("  A / ←: Move Left")
-    print("  D / →: Move Right")
-    print("  ↑: Move Up")
-    print("  SPACE: Fire")
-    print("  ← + SPACE: Left + Fire")
-    print("  → + SPACE: Right + Fire")
-    print("  ESC: Quit game")
-    print("=" * 50)
+    """Play BeamRider or Asteroids with human keyboard controls using official gymnasium.utils.play"""
     
     # Register ALE environments
     gym.register_envs(ale_py) # "import ale_py" is actually enough
@@ -40,7 +29,7 @@ def play_atari_human(game:str):
         env = gym.make("ALE/Asteroids-v5", render_mode='rgb_array', frameskip=1)
     else:
         raise ValueError(f"Unsupported game: {game}")
-
+    env = MaxRender(env) # Smooth rendering for Atari games (particularly Asteroids) to avoid flickering
     # Use official gymnasium.utils.play function
   
     
