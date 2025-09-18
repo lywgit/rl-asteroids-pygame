@@ -19,40 +19,41 @@ def moving_average(data, window_size):
     
     return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
 
-def print_training_progress(frames, eval_rewards, ma_window=10):
+def print_training_progress(frames, eval_rewards, epsilons, ma_window=10):
     """
     Print training progress data as a formatted table.
     
     Args:
         frames (list): Frame numbers
         eval_rewards (list): Evaluation rewards
+        epsilons (list): Epsilon values
         ma_window (int): Moving average window size
     """
     print(f"\nTraining Progress Data (Moving Average Window: {ma_window})")
-    print("=" * 65)
-    print(f"{'Frame':<10} {'Eval Reward':<12} {'MA Eval Reward':<15}")
-    print("-" * 65)
+    print("=" * 80)
+    print(f"{'Frame':<10} {'Eval Reward':<12} {'MA Eval Reward':<15} {'Epsilon':<8}")
+    print("-" * 80)
     
     # Calculate moving average
     if len(eval_rewards) >= ma_window:
         ma_rewards = moving_average(eval_rewards, ma_window)
         
         # Print data row by row
-        for i, (frame, eval_reward) in enumerate(zip(frames, eval_rewards)):
+        for i, (frame, eval_reward, epsilon) in enumerate(zip(frames, eval_rewards, epsilons)):
             if i < ma_window - 1:
                 # Before we have enough data for moving average
-                print(f"{frame:<10} {eval_reward:<12.1f} {'N/A':<15}")
+                print(f"{frame:<10} {eval_reward:<12.1f} {'N/A':<15} {epsilon:<8.2f}")
             else:
                 # With moving average data
                 ma_index = i - (ma_window - 1)
                 ma_reward = ma_rewards[ma_index]
-                print(f"{frame:<10} {eval_reward:<12.1f} {ma_reward:<15.1f}")
+                print(f"{frame:<10} {eval_reward:<12.1f} {ma_reward:<15.1f} {epsilon:<8.2f}")
     else:
         # Not enough data for moving average
-        for frame, eval_reward in zip(frames, eval_rewards):
-            print(f"{frame:<10} {eval_reward:<12.1f} {'N/A':<15}")
+        for frame, eval_reward, epsilon in zip(frames, eval_rewards, epsilons):
+            print(f"{frame:<10} {eval_reward:<12.1f} {'N/A':<15} {epsilon:<8.2f}")
     
-    print("-" * 65)
+    print("-" * 80)
 
 def parse_training_log(log_file_path):
     """
@@ -62,26 +63,29 @@ def parse_training_log(log_file_path):
         log_file_path (str): Path to the log file
         
     Returns:
-        tuple: (frames, eval_rewards, best_rewards) lists
+        tuple: (frames, eval_rewards, best_rewards, epsilons) lists
     """
     frames = []
     eval_rewards = []
     best_rewards = []
+    epsilons = []
     
     with open(log_file_path, 'r') as file:
         current_frame = None
+        current_epsilon = None
         
         for line in file:
             line = line.strip()
             
-            # Extract frame number from episode lines
-            frame_match = re.search(r'frame (\d+),', line)
+            # Extract frame number and epsilon from episode lines
+            frame_match = re.search(r'frame (\d+),.*epsilon ([\d.]+)', line)
             if frame_match:
                 current_frame = int(frame_match.group(1))
+                current_epsilon = float(frame_match.group(2))
             
             # Extract evaluation results
             eval_match = re.search(r'Evaluation results: ([\d.]+) best: (-?inf|[\d.-]+)', line)
-            if eval_match and current_frame is not None:
+            if eval_match and current_frame is not None and current_epsilon is not None:
                 eval_reward = float(eval_match.group(1))
                 best_reward_str = eval_match.group(2)
                 
@@ -95,6 +99,7 @@ def parse_training_log(log_file_path):
                 
                 frames.append(current_frame)
                 eval_rewards.append(eval_reward)
+                epsilons.append(current_epsilon)
                 if best_reward is not None:
                     best_rewards.append(best_reward)
                 else:
@@ -104,7 +109,7 @@ def parse_training_log(log_file_path):
                     else:
                         best_rewards.append(eval_reward)  # Use current eval as placeholder
     
-    return frames, eval_rewards, best_rewards
+    return frames, eval_rewards, best_rewards, epsilons
 
 def plot_training_progress(frames, eval_rewards, best_rewards, output_file='training_progress.png', ma_window=10):
     """
@@ -163,8 +168,8 @@ def plot_training_progress(frames, eval_rewards, best_rewards, output_file='trai
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Parse training log and create evaluation reward plot')
-    parser.add_argument('log_file', nargs='?', default='log_20250918_1218.txt',
-                        help='Path to the training log file (default: log_20250918_1218.txt)')
+    parser.add_argument('log_file', 
+                        help='Path to the training log file (stdout output from train_dqn.py)')
     parser.add_argument('--window-size', '-w', type=int, default=10,
                         help='Moving average window size (default: 10)')
     parser.add_argument('--output', '-o', default='training_progress.png',
@@ -173,15 +178,16 @@ def main():
     args = parser.parse_args()
     
     try:
-        frames, eval_rewards, best_rewards = parse_training_log(args.log_file)
+        frames, eval_rewards, best_rewards, epsilons = parse_training_log(args.log_file)
         
         print(f"Parsed {len(frames)} evaluation points from: {args.log_file}")
         print(f"Frame range: {min(frames)} - {max(frames)}")
         print(f"Reward range: {min(eval_rewards):.0f} - {max(eval_rewards):.0f}")
+        print(f"Epsilon range: {min(epsilons):.3f} - {max(epsilons):.3f}")
         print(f"Using moving average window size: {args.window_size}")
         
         # Print the training progress data as a table
-        print_training_progress(frames, eval_rewards, ma_window=args.window_size)
+        print_training_progress(frames, eval_rewards, epsilons, ma_window=args.window_size)
         
         # Create the plot with moving average smoothing
         plot_training_progress(frames, eval_rewards, best_rewards, 
