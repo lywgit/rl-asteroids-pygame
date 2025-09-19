@@ -111,6 +111,8 @@ def main():
 
     if args.record_video:
         name_prefix = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.game}"
+        if args.game == 'py-asteroids':
+           env.metadata["render_fps"] = 30
         env = RecordVideo(env, video_folder="videos/", episode_trigger=lambda x: True, name_prefix=name_prefix)
         os.makedirs("videos/", exist_ok=True)
 

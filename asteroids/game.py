@@ -7,10 +7,10 @@ from .entities.shot import Shot
 from .entities.asteroidfield import AsteroidField
 
 class AsteroidsGame:
-    def __init__(self, width=SCREEN_WIDTH, height=SCREEN_HEIGHT):
+    def __init__(self, width=SCREEN_WIDTH, height=SCREEN_HEIGHT, target_fps=60):
         self.width = width
         self.height = height
-        self._dt = 0.016  # default timestep (60 FPS)
+        self._dt = 1.0 / target_fps  # Calculate timestep from target FPS
         self.reset()
 
     def reset(self):

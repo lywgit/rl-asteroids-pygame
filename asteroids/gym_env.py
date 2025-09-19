@@ -5,11 +5,11 @@ from .game import AsteroidsGame
 import pygame
 
 class AsteroidsEnv(gym.Env):
-    metadata = {"render_modes": ["human"], "render_fps": 60}
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
     def __init__(self, render_mode=None):
         super().__init__()
-        self.game = AsteroidsGame()
+        self.game = AsteroidsGame(target_fps=self.metadata["render_fps"])
         # Observation is the rendered RGB screen
         self.observation_shape = (self.game.height, self.game.width, 3)
         self.observation_space = spaces.Box(low=0, high=255, shape=self.observation_shape, dtype=np.uint8)
@@ -76,7 +76,22 @@ class AsteroidsEnv(gym.Env):
             self.game.render(self.screen)
             pygame.display.flip()  # Update the display for human mode
             if self.clock is not None:
-                self.clock.tick(60)
+                self.clock.tick(self.metadata["render_fps"])
+        elif self.render_mode == "rgb_array":
+            if self.screen is None:
+                self._init_render()
+            # Ensure screen is properly initialized
+            if self.screen is None or not isinstance(self.screen, pygame.Surface):
+                raise RuntimeError("Screen surface not properly initialized for rgb_array rendering")
+            # Render to surface and return RGB array
+            self._render_to_surface(self.screen)
+            # Get the RGB array (width, height, 3)
+            rgb_array = pygame.surfarray.array3d(self.screen)
+            # Transpose to (height, width, 3) to match standard format
+            rgb_array = np.transpose(rgb_array, (1, 0, 2))
+            return rgb_array
+        # Return None for unsupported render modes or when render_mode is None
+        return None
 
     def close(self):
         if self.screen is not None:
@@ -98,8 +113,12 @@ class AsteroidsEnv(gym.Env):
             
             # Try to bring window to front
             pygame.display.flip()
-        else:
+        elif self.render_mode == "rgb_array":
             # For rgb_array mode, create an off-screen surface (no window)
+            self.screen = pygame.Surface((self.game.width, self.game.height))
+            self.clock = pygame.time.Clock()
+        else:
+            # For observation mode or when render_mode is None, still need a surface for _get_obs
             self.screen = pygame.Surface((self.game.width, self.game.height))
             self.clock = pygame.time.Clock()
 
