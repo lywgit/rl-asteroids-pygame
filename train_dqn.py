@@ -60,24 +60,187 @@ def get_default_config() -> dict:
     """Get default configuration values"""
     return {
         'game': 'beamrider',
-        'max_steps': 100000,
+        'max_steps': 500000,
         'replay_buffer_size': 100000,
+        'load_replay_buffer': None,    # Path to pregenerated replay buffer (.h5 or .npz)
         'learning_rate': 0.0001,
         'batch_size': 32,
         'gamma': 0.99,
         'epsilon_start': 1.0,
         'epsilon_end': 0.1,
-        'epsilon_decay_frames': 100000,
+        'epsilon_decay_frames': 200000,
+        'double_dqn': True,
+        'dueling_dqn': True,
         'checkpoint_interval': 10000,
-        'eval_episode_interval': 5,
+        'eval_episode_interval': 10,
         'load_model': None,
         'load_curl_checkpoint': None,  # Path to CURL pretrained encoder checkpoint
         'freeze_curl_encoder': False,  # Whether to freeze CURL encoder during training
-        'load_replay_buffer': None,    # Path to pregenerated replay buffer (.h5 or .npz)
-        'comment': '',
-        'double_dqn': True,
-        'dueling_dqn': True
+        'comment': ''
     }
+
+
+def load_model(config: dict, net: nn.Module, tgt_net: nn.Module, device: str) -> bool:
+    """
+    Load a pretrained model checkpoint into the networks.
+    
+    Args:
+        config: Configuration dictionary
+        net: Main network to load weights into
+        tgt_net: Target network to load weights into
+        device: Device to load the model on
+        
+    Returns:
+        bool: True if successful, False if failed (should stop training)
+    """
+    if not config.get('load_model'):
+        return True
+        
+    try:
+        print(f"Loading model from: {config['load_model']}")
+        checkpoint = torch.load(config['load_model'], map_location=device)
+        net.load_state_dict(checkpoint)
+        tgt_net.load_state_dict(checkpoint)  # Start with same weights for target network
+        print("✅ Model loaded successfully")
+        return True
+    except Exception as e:
+        print(f"❌ Error loading model: {e}")
+        print(f"❌ Failed to load model from: {config['load_model']}")
+        print("❌ Training stopped. Please check the model path and try again.")
+        return False
+
+
+def load_curl_pretrain_weight(config: dict, net: nn.Module, tgt_net: nn.Module, device: str) -> bool:
+    """
+    Load CURL pretrained encoder weights into the DQN networks.
+    
+    Args:
+        config: Configuration dictionary
+        net: Main network to load encoder weights into
+        tgt_net: Target network to load encoder weights into
+        device: Device to load the weights on
+        
+    Returns:
+        bool: True if successful, False if failed (should stop training)
+    """
+    if not config.get('load_curl_checkpoint'):
+        return True
+        
+    try:
+        print(f"Loading CURL pretrained encoder from: {config['load_curl_checkpoint']}")
+        curl_checkpoint = torch.load(config['load_curl_checkpoint'], map_location=device, weights_only=False)
+        curl_state_dict = curl_checkpoint['encoder_state_dict']
+        
+        # Extract convolutional weights from CURL encoder
+        conv_state_dict = {}
+        for key, value in curl_state_dict.items():
+            if key.startswith('conv.'):
+                # The key already matches DQN model structure (conv.0.weight, conv.2.weight, etc.)
+                conv_state_dict[key] = value
+        
+        # Load weights into DQN model's convolutional layers
+        dqn_state_dict = net.state_dict()
+        loaded_layers = []
+        missed_layers = []
+        
+        for key in conv_state_dict:
+            if key in dqn_state_dict:
+                if conv_state_dict[key].shape == dqn_state_dict[key].shape:
+                    dqn_state_dict[key] = conv_state_dict[key]
+                    loaded_layers.append(key)
+                else:
+                    missed_layers.append(f"{key} (shape mismatch)")
+            else:
+                missed_layers.append(f"{key} (not found)")
+        
+        # Load the updated state dict into the network
+        net.load_state_dict(dqn_state_dict)
+        
+        # Also load into target network to maintain consistency
+        tgt_net.load_state_dict(dqn_state_dict)
+        
+        # Print loading summary
+        total_conv_params = sum(p.numel() for name, p in net.named_parameters() if name.startswith('conv.'))
+        loaded_conv_params = sum(conv_state_dict[key].numel() for key in loaded_layers)
+        
+        print(f"✅ CURL encoder loaded successfully!")
+        print(f"   Loaded layers: {len(loaded_layers)}")
+        print(f"   Missed layers: {len(missed_layers)}")
+        if missed_layers:
+            print(f"   Missed: {missed_layers}")
+        print(f"   Conv parameters loaded: {loaded_conv_params}/{total_conv_params}")
+        print(f"   CURL epoch: {curl_checkpoint.get('epoch', 'unknown')}")
+        
+        # Optionally freeze encoder layers if specified
+        if config.get('freeze_curl_encoder', False):
+            frozen_params = 0
+            for name, param in net.named_parameters():
+                if name.startswith('conv.'):
+                    param.requires_grad = False
+                    frozen_params += param.numel()
+            
+            # Also freeze target network parameters (though they don't have gradients anyway)
+            for name, param in tgt_net.named_parameters():
+                if name.startswith('conv.'):
+                    param.requires_grad = False
+            
+            print(f"🔒 Froze {frozen_params} encoder parameters")
+        else:
+            print("🔓 Encoder layers will be fine-tuned during training")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error loading CURL checkpoint: {e}")
+        print(f"❌ Failed to load CURL checkpoint from: {config['load_curl_checkpoint']}")
+        print("❌ Training stopped. Please check the CURL checkpoint path and try again.")
+        return False
+
+
+def load_replay_buffer(config: dict, buffer: ExperienceBuffer, agent: 'Agent', net: nn.Module, 
+                      buffer_size: int, device: str) -> bool:
+    """
+    Load or generate the replay buffer for training.
+    
+    Args:
+        config: Configuration dictionary
+        buffer: Experience buffer to fill
+        agent: Agent for generating experiences
+        net: Network for generating experiences (if needed)
+        buffer_size: Size of the buffer to fill
+        device: Device to run experience generation on
+        
+    Returns:
+        bool: True if successful, False if failed (should stop training)
+    """
+    if config.get('load_replay_buffer'):
+        try:
+            buffer_path = config['load_replay_buffer']
+            print(f"Loading replay buffer from: {buffer_path}")
+            if buffer_path.endswith('.h5') or buffer_path.endswith('.hdf5'):
+                buffer.load_buffer_from_hdf5(buffer_path)
+            elif buffer_path.endswith('.npz'):
+                buffer.load_buffer_from_npz(buffer_path)
+            else:
+                raise ValueError("Unsupported buffer file format. Use .h5 or .npz")
+            print("✅ Replay buffer loaded successfully")
+            return True
+        except Exception as e:
+            print(f"❌ Error loading replay buffer: {e}")
+            print(f"❌ Failed to load replay buffer from: {config['load_replay_buffer']}")
+            print("❌ Training stopped. Please check the buffer path and try again.")
+            return False
+    else:
+        initial_experience_epsilon = config['epsilon_start']
+        print(f"Filling initial experience buffer with epsilon {initial_experience_epsilon} ...")
+        while len(buffer) < buffer_size:
+            if len(buffer) % (buffer_size // 5) == 0:
+                print(len(buffer))
+            agent.play_step(net, epsilon=initial_experience_epsilon, device=device)
+        agent.reset_env()
+        print("Experience buffer filled", len(buffer))
+        return True
+
 
 # Agent: handle interaction with environment and keep experience buffer for replay
 class Agent:
@@ -153,7 +316,7 @@ def train(env, config):
     print('Run ID:', run_id)
 
     checkpoint_dir = Path('./checkpoints') / run_id
-    log_dir = Path('./runs') / run_id
+    log_dir = Path('./runs') / game /run_id
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -194,116 +357,15 @@ def train(env, config):
         tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 
-    # Load saved model or curl pretrained encoder if specified
-    if config.get('load_model'):
-        try:
-            print(f"Loading model from: {config['load_model']}")
-            checkpoint = torch.load(config['load_model'], map_location=device)
-            net.load_state_dict(checkpoint)
-            tgt_net.load_state_dict(checkpoint)  # Start with same weights for target network
-            print("✅ Model loaded successfully")
-        except Exception as e:
-            print(f"❌ Error loading model: {e}")
-            print(f"❌ Failed to load model from: {config['load_model']}")
-            print("❌ Training stopped. Please check the model path and try again.")
-            return
+    # Load saved model, CURL pretrained encoder, and replay buffer
+    if not load_model(config, net, tgt_net, device):
+        return
         
-    if config.get('load_curl_checkpoint'):
-        try:
-            print(f"Loading CURL pretrained encoder from: {config['load_curl_checkpoint']}")
-            curl_checkpoint = torch.load(config['load_curl_checkpoint'], map_location=device, weights_only=False)
-            curl_state_dict = curl_checkpoint['encoder_state_dict']
-            
-            # Extract convolutional weights from CURL encoder
-            conv_state_dict = {}
-            for key, value in curl_state_dict.items():
-                if key.startswith('conv.'):
-                    # The key already matches DQN model structure (conv.0.weight, conv.2.weight, etc.)
-                    conv_state_dict[key] = value
-            
-            # Load weights into DQN model's convolutional layers
-            dqn_state_dict = net.state_dict()
-            loaded_layers = []
-            missed_layers = []
-            
-            for key in conv_state_dict:
-                if key in dqn_state_dict:
-                    if conv_state_dict[key].shape == dqn_state_dict[key].shape:
-                        dqn_state_dict[key] = conv_state_dict[key]
-                        loaded_layers.append(key)
-                    else:
-                        missed_layers.append(f"{key} (shape mismatch)")
-                else:
-                    missed_layers.append(f"{key} (not found)")
-            
-            # Load the updated state dict into the network
-            net.load_state_dict(dqn_state_dict)
-            
-            # Also load into target network to maintain consistency
-            tgt_net.load_state_dict(dqn_state_dict)
-            
-            # Print loading summary
-            total_conv_params = sum(p.numel() for name, p in net.named_parameters() if name.startswith('conv.'))
-            loaded_conv_params = sum(conv_state_dict[key].numel() for key in loaded_layers)
-            
-            print(f"✅ CURL encoder loaded successfully!")
-            print(f"   Loaded layers: {len(loaded_layers)}")
-            print(f"   Missed layers: {len(missed_layers)}")
-            if missed_layers:
-                print(f"   Missed: {missed_layers}")
-            print(f"   Conv parameters loaded: {loaded_conv_params}/{total_conv_params}")
-            print(f"   CURL epoch: {curl_checkpoint.get('epoch', 'unknown')}")
-            
-            # Optionally freeze encoder layers if specified
-            if config.get('freeze_curl_encoder', False):
-                frozen_params = 0
-                for name, param in net.named_parameters():
-                    if name.startswith('conv.'):
-                        param.requires_grad = False
-                        frozen_params += param.numel()
-                
-                # Also freeze target network parameters (though they don't have gradients anyway)
-                for name, param in tgt_net.named_parameters():
-                    if name.startswith('conv.'):
-                        param.requires_grad = False
-                
-                print(f"🔒 Froze {frozen_params} encoder parameters")
-            else:
-                print("🔓 Encoder layers will be fine-tuned during training")
-                
-        except Exception as e:
-            print(f"❌ Error loading CURL checkpoint: {e}")
-            print(f"❌ Failed to load CURL checkpoint from: {config['load_curl_checkpoint']}")
-            print("❌ Training stopped. Please check the CURL checkpoint path and try again.")
-            return
-
-
-    # fill (or load) buffer before start training
-    if config.get('load_replay_buffer'):
-        try:
-            buffer_path = config['load_replay_buffer']
-            print(f"Loading replay buffer from: {buffer_path}")
-            if buffer_path.endswith('.h5') or buffer_path.endswith('.hdf5'):
-                buffer.load_buffer_from_hdf5(buffer_path)
-            elif buffer_path.endswith('.npz'):
-                buffer.load_buffer_from_npz(buffer_path)
-            else:
-                raise ValueError("Unsupported buffer file format. Use .h5 or .npz")
-            print("✅ Replay buffer loaded successfully")
-        except Exception as e:
-            print(f"❌ Error loading replay buffer: {e}")
-            print(f"❌ Failed to load replay buffer from: {config['load_replay_buffer']}")
-            print("❌ Training stopped. Please check the buffer path and try again.")
-            return
-    else:
-        initial_experience_epsilon = config['epsilon_start']
-        print(f"Filling initial experience buffer with epsilon {initial_experience_epsilon} ...")
-        while len(buffer) < buffer_size:
-            if len(buffer) % (buffer_size // 5) == 0:
-                print(len(buffer))
-            agent.play_step(net, epsilon=initial_experience_epsilon, device=device)
-        agent.reset_env()
-        print("Experience buffer filled", len(buffer))
+    if not load_curl_pretrain_weight(config, net, tgt_net, device):
+        return
+        
+    if not load_replay_buffer(config, buffer, agent, net, buffer_size, device):
+        return
 
     # start training
     frame_idx = 0
@@ -404,12 +466,7 @@ def main():
     print("Configuration:")
     for key, value in config.items():
         print(f"  {key}: {value}")
-    
-    # Validate configuration
-    if config['game'] not in ['py-asteroids', 'beamrider', 'asteroids']:
-        print(f"❌ Invalid game: {config['game']}. Must be 'py-asteroids', 'beamrider' or 'asteroids'")
-        return
-    
+       
     # Initialize environment
     game = str(config['game'].lower())
     if game == 'py-asteroids':

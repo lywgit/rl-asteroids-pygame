@@ -5,6 +5,8 @@ __pycache__/
 reference/
 runs/
 checkpoints/
+buffers/
 videos/
+archives/
 *.h5
 *.npz
