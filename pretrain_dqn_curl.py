@@ -22,7 +22,7 @@ import random
 
 from shared.models import AtariDQN, AtariDuelingDQN
 from shared.utils import get_device
-from train_dqn import ExperienceBuffer
+from shared.experience import ExperienceBuffer
 
 
 class CURLEncoder(nn.Module):

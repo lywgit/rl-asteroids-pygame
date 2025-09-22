@@ -1,4 +1,5 @@
-from train_dqn import Agent, Experience, ExperienceBuffer
+from train_dqn import Agent
+from shared.experience import Experience, ExperienceBuffer
 from shared.models import AtariDQN, AtariDuelingDQN
 from shared.environments import make_atari_env, make_py_asteroids_env
 import numpy as np
@@ -50,24 +51,13 @@ if use_hdf5:
     print(f"Saving experience buffer to HDF5: {save_path} ...")
     buffer.save_buffer_to_hdf5(save_path)
     print("Saved to HDF5 format")
-    
-    # try loading data back (may OOM)  
-    print("Loading experience buffer back from HDF5...")
-    loaded_buffer = ExperienceBuffer(capacity=buffer_size)
-    loaded_buffer.load_buffer_from_hdf5(save_path)
-    print(f"loaded size = {len(loaded_buffer)}")
+
 else:
     save_path = f'buffer_{buffer_id}.npz'
     print(f"Saving experience buffer to NPZ: {save_path} ...")
     buffer.save_buffer_to_npz(save_path)
     print("Saved to NPZ format")
     
-    # try loading data back (may OOM)
-    print("Loading experience buffer back from NPZ...")
-    loaded_buffer = ExperienceBuffer(capacity=buffer_size)
-    loaded_buffer.load_buffer_from_npz(save_path)
-    print(f"loaded size = {len(loaded_buffer)}")
-
 print(f"   📁 File saved as: {save_path}")
 
 

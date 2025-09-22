@@ -34,7 +34,7 @@ def load_model(model_path: str, env, device: str):
     return model
 
 
-def play_game(env, model, device: str, num_episodes: int = 5, delay: float = 0.0):
+def play_game(game, env, model, device: str, num_episodes: int = 5, delay: float = 0.0):
     """Play the game using the trained model"""
     episode_rewards = []
     
@@ -53,7 +53,9 @@ def play_game(env, model, device: str, num_episodes: int = 5, delay: float = 0.0
             with torch.no_grad():
                 q_values = model(obs_tensor)
                 action = q_values.argmax(dim=1).item()
-            
+            if game == 'asteroids': # disable DOWN and DOWNFIRE
+                if action in (5, 11):
+                    action = 0 
             # Take action
             obs, reward, truncated, terminated, _ = env.step(action)
             episode_reward += reward
@@ -74,9 +76,9 @@ def play_game(env, model, device: str, num_episodes: int = 5, delay: float = 0.0
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Play DQN-trained agent on Beamrider or Asteroids')
-    parser.add_argument('game', choices=['py-asteroids', 'beamrider', 'asteroids' ], 
-                       help='Game to play (py-asteroids, beamrider, asteroids)')
+    parser = argparse.ArgumentParser(description='Play DQN-trained agent on BeamRider or Asteroids')
+    parser.add_argument('game', type=str,
+                        help='Game to play (py-asteroids, or atari games: beamrider, asteroids, etc)')
     parser.add_argument('--model', type=str, required=True,
                        help='Path to the trained model (.pth file)')
     parser.add_argument('--episodes', type=int, default=1,
@@ -104,15 +106,19 @@ def main():
         env = make_atari_env("ALE/BeamRider-v5", render_mode=render_mode, grayscale_obs=True, max_episode_steps=100000)
         print("🛸 Created BeamRider environment")
     elif args.game == 'asteroids':
-        env = make_atari_env("ALE/Asteroids-v5", render_mode=render_mode, grayscale_obs=True, max_episode_steps=100000)
+        env = make_atari_env("ALE/Asteroids-v5", render_mode=render_mode, grayscale_obs=True, max_episode_steps=100000, frame_skip=5)
         print("🚀 Created Asteroids environment")
     else:
         raise ValueError(f"Unknown game: {args.game}")
 
     if args.record_video:
+        from shared.wrappers import MaxRender
+        env = MaxRender(env) # Smooth rendering for Atari games (particularly Asteroids) to
         name_prefix = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.game}"
         if args.game == 'py-asteroids':
            env.metadata["render_fps"] = 30
+        else:
+           env.metadata["render_fps"] = 10
         env = RecordVideo(env, video_folder="videos/", episode_trigger=lambda x: True, name_prefix=name_prefix)
         os.makedirs("videos/", exist_ok=True)
 
@@ -131,7 +137,7 @@ def main():
     # Play the game
     try:
         print(f"\n🎯 Starting to play {args.episodes} episodes of {args.game}...")
-        episode_rewards = play_game(env, model, device, args.episodes, args.delay)
+        episode_rewards = play_game(args.game, env, model, device, args.episodes, args.delay)
         
         # Print statistics
         print(f"\n📈 Game Statistics:")
