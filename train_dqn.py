@@ -74,8 +74,6 @@ def get_default_config() -> dict:
         'checkpoint_interval': 10000,
         'eval_episode_interval': 10,
         'load_model': None,
-        'load_curl_checkpoint': None,  # Path to CURL pretrained encoder checkpoint
-        'freeze_curl_encoder': False,  # Whether to freeze CURL encoder during training
         'comment': ''
     }
 
@@ -107,93 +105,6 @@ def load_model(config: dict, net: nn.Module, tgt_net: nn.Module, device: str) ->
         print(f"❌ Error loading model: {e}")
         print(f"❌ Failed to load model from: {config['load_model']}")
         print("❌ Training stopped. Please check the model path and try again.")
-        return False
-
-
-def load_curl_pretrain_weight(config: dict, net: nn.Module, tgt_net: nn.Module, device: str) -> bool:
-    """
-    Load CURL pretrained encoder weights into the DQN networks.
-    
-    Args:
-        config: Configuration dictionary
-        net: Main network to load encoder weights into
-        tgt_net: Target network to load encoder weights into
-        device: Device to load the weights on
-        
-    Returns:
-        bool: True if successful, False if failed (should stop training)
-    """
-    if not config.get('load_curl_checkpoint'):
-        return True
-        
-    try:
-        print(f"Loading CURL pretrained encoder from: {config['load_curl_checkpoint']}")
-        curl_checkpoint = torch.load(config['load_curl_checkpoint'], map_location=device, weights_only=False)
-        curl_state_dict = curl_checkpoint['encoder_state_dict']
-        
-        # Extract convolutional weights from CURL encoder
-        conv_state_dict = {}
-        for key, value in curl_state_dict.items():
-            if key.startswith('conv.'):
-                # The key already matches DQN model structure (conv.0.weight, conv.2.weight, etc.)
-                conv_state_dict[key] = value
-        
-        # Load weights into DQN model's convolutional layers
-        dqn_state_dict = net.state_dict()
-        loaded_layers = []
-        missed_layers = []
-        
-        for key in conv_state_dict:
-            if key in dqn_state_dict:
-                if conv_state_dict[key].shape == dqn_state_dict[key].shape:
-                    dqn_state_dict[key] = conv_state_dict[key]
-                    loaded_layers.append(key)
-                else:
-                    missed_layers.append(f"{key} (shape mismatch)")
-            else:
-                missed_layers.append(f"{key} (not found)")
-        
-        # Load the updated state dict into the network
-        net.load_state_dict(dqn_state_dict)
-        
-        # Also load into target network to maintain consistency
-        tgt_net.load_state_dict(dqn_state_dict)
-        
-        # Print loading summary
-        total_conv_params = sum(p.numel() for name, p in net.named_parameters() if name.startswith('conv.'))
-        loaded_conv_params = sum(conv_state_dict[key].numel() for key in loaded_layers)
-        
-        print(f"✅ CURL encoder loaded successfully!")
-        print(f"   Loaded layers: {len(loaded_layers)}")
-        print(f"   Missed layers: {len(missed_layers)}")
-        if missed_layers:
-            print(f"   Missed: {missed_layers}")
-        print(f"   Conv parameters loaded: {loaded_conv_params}/{total_conv_params}")
-        print(f"   CURL epoch: {curl_checkpoint.get('epoch', 'unknown')}")
-        
-        # Optionally freeze encoder layers if specified
-        if config.get('freeze_curl_encoder', False):
-            frozen_params = 0
-            for name, param in net.named_parameters():
-                if name.startswith('conv.'):
-                    param.requires_grad = False
-                    frozen_params += param.numel()
-            
-            # Also freeze target network parameters (though they don't have gradients anyway)
-            for name, param in tgt_net.named_parameters():
-                if name.startswith('conv.'):
-                    param.requires_grad = False
-            
-            print(f"🔒 Froze {frozen_params} encoder parameters")
-        else:
-            print("🔓 Encoder layers will be fine-tuned during training")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Error loading CURL checkpoint: {e}")
-        print(f"❌ Failed to load CURL checkpoint from: {config['load_curl_checkpoint']}")
-        print("❌ Training stopped. Please check the CURL checkpoint path and try again.")
         return False
 
 
@@ -357,13 +268,11 @@ def train(env, config):
         tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 
-    # Load saved model, CURL pretrained encoder, and replay buffer
+    # Load saved model to continue training
     if not load_model(config, net, tgt_net, device):
         return
-        
-    if not load_curl_pretrain_weight(config, net, tgt_net, device):
-        return
-        
+    
+    # Load replay buffer or generate initial experiences
     if not load_replay_buffer(config, buffer, agent, net, buffer_size, device):
         return
 
