@@ -18,7 +18,7 @@ from gymnasium.wrappers import RecordVideo
 
 # Import shared components
 from shared.models import AtariDQN, AtariDuelingDQN
-from shared.environments import make_atari_env, make_py_asteroids_env
+from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map
 from shared.utils import get_device
 
 
@@ -98,18 +98,16 @@ def main():
     
     # Create environment
     render_mode = "rgb_array" if args.no_render or args.record_video else "human"
-
-    if args.game == 'py-asteroids':
-        env = make_py_asteroids_env(render_mode=render_mode, action_mode="combination")
-        print("🚀 Created Py-Asteroids environment. Should use correct action model: single or combination ")
-    elif args.game == 'beamrider':
-        env = make_atari_env("ALE/BeamRider-v5", render_mode=render_mode, grayscale_obs=True, max_episode_steps=100000)
-        print("🛸 Created BeamRider environment")
-    elif args.game == 'asteroids':
-        env = make_atari_env("ALE/Asteroids-v5", render_mode=render_mode, grayscale_obs=True, max_episode_steps=100000, frame_skip=5)
-        print("🚀 Created Asteroids environment")
-    else:
-        raise ValueError(f"Unknown game: {args.game}")
+    game = str(args.game).lower()
+    if game == 'py-asteroids':
+        env = make_py_asteroids_env(render_mode=render_mode, action_mode="combination") # "combination" or "single"
+    else: 
+        env_id = atari_name_id_map.get(game, game)
+        try:
+            env = make_atari_env(env_id, render_mode=render_mode, clip_reward=False)
+            print(f"🚀 Created Atari environment: {env_id}")
+        except Exception as e:
+            raise ValueError(f"Unsupported game: {game}. Error: {e}")
 
     if args.record_video:
         from shared.wrappers import MaxRender
