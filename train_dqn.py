@@ -20,6 +20,7 @@ from shared.models import AtariDQN, AtariDuelingDQN
 from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map
 from shared.utils import get_device
 from shared.experience import Experience, ExperienceBuffer
+from shared.prioritized_experience import PrioritizedExperienceBuffer
 
 
 def load_config(config_path: str) -> dict:
@@ -74,7 +75,13 @@ def get_default_config() -> dict:
         'checkpoint_interval': 10000,
         'eval_episode_interval': 10,
         'load_model': None,
-        'comment': ''
+        'comment': '',
+        # Prioritized Experience Replay settings
+        'prioritized_replay': False,   # Enable prioritized experience replay
+        'priority_alpha': 0.6,         # Priority exponent (0=uniform, 1=full priority)
+        'priority_beta': 0.4,          # Importance sampling correction exponent
+        'priority_beta_increment': 0.0001,  # Beta annealing rate per sample
+        'priority_epsilon': 1e-6       # Small constant to avoid zero priorities
     }
 
 
@@ -108,7 +115,7 @@ def load_model(config: dict, net: nn.Module, tgt_net: nn.Module, device: str) ->
         return False
 
 
-def load_replay_buffer(config: dict, buffer: ExperienceBuffer, agent: 'Agent', net: nn.Module, 
+def load_replay_buffer(config: dict, buffer: 'ExperienceBuffer | PrioritizedExperienceBuffer', agent: 'Agent', net: nn.Module, 
                       buffer_size: int, device: str) -> bool:
     """
     Load or generate the replay buffer for training.
@@ -237,6 +244,9 @@ def train(env, config):
 
     writer = SummaryWriter(log_dir=log_dir)
 
+    # Create appropriate buffer type based on configuration
+    prioritized_replay = config.get('prioritized_replay', False)
+    
     hyperparameters = {
         "game": game,
         "buffer_size": buffer_size,
@@ -249,14 +259,33 @@ def train(env, config):
         "gamma": gamma,
         "frames": 0,
         "double_dqn": double_dqn,
-        "dueling_dqn": dueling_dqn
+        "dueling_dqn": dueling_dqn,
+        "prioritized_replay": prioritized_replay,
+        "priority_alpha": config.get('priority_alpha', 0.6) if prioritized_replay else 0.0,
+        "priority_beta": config.get('priority_beta', 0.4) if prioritized_replay else 0.0,
+        "priority_beta_increment": config.get('priority_beta_increment', 0.0001) if prioritized_replay else 0.0,
+        "priority_epsilon": config.get('priority_epsilon', 1e-6) if prioritized_replay else 0.0
         }
     metrics = {
         "best_eval_reward": float("-inf")
     }
-
-
-    buffer = ExperienceBuffer(capacity=buffer_size)
+    if prioritized_replay:
+        print("Using Prioritized Experience Replay")
+        priority_alpha = config.get('priority_alpha', 0.6)
+        priority_beta = config.get('priority_beta', 0.4)
+        priority_beta_increment = config.get('priority_beta_increment', 0.0001)
+        priority_epsilon = config.get('priority_epsilon', 1e-6)
+        
+        buffer = PrioritizedExperienceBuffer(
+            capacity=buffer_size,
+            alpha=priority_alpha,
+            beta=priority_beta,
+            beta_increment=priority_beta_increment,
+            epsilon=priority_epsilon
+        )
+    else:
+        buffer = ExperienceBuffer(capacity=buffer_size)
+    
     agent = Agent(env, buffer) # when agent play step, it updates the buffer by default
 
     if dueling_dqn:
@@ -290,9 +319,19 @@ def train(env, config):
             episode_reward = agent.play_step(net, epsilon=epsilon, device=device)
 
 
-            # sample from buffer 
-            obs, actions, rewards, dones, next_obs = buffer.sample(batch_size=batch_size, as_torch_tensor=True, device=device)
-            # train online network
+            # Sample from buffer - handle both standard and prioritized replay
+            if prioritized_replay:
+                # Prioritized sampling returns: (tensors, tree_indices, importance_weights)
+                (obs, actions, rewards, dones, next_obs), tree_indices, importance_weights = buffer.sample(
+                    batch_size=batch_size, as_torch_tensor=True, device=device)
+            else:
+                # Standard uniform sampling
+                obs, actions, rewards, dones, next_obs = buffer.sample(
+                    batch_size=batch_size, as_torch_tensor=True, device=device)
+                importance_weights = torch.ones(batch_size, device=device)  # Uniform weights
+                tree_indices = None  # Not needed for standard replay
+            
+            # Train online network
             # 1. target/actual Q(s,a) = reward + gamma * max_a{tgt_net(next_state)}
             if double_dqn:
                 next_actions = net(next_obs).argmax(dim=1, keepdim=True)
@@ -300,13 +339,44 @@ def train(env, config):
             else:
                 Q_target = rewards + gamma * tgt_net(next_obs).max(dim=1)[0] * (~dones) # if done set to 0
             Q_target = Q_target.detach()
+            
             # 2. current/predicted Q(s,a) = net(state)_action
             Q_pred = net(obs).gather(1, actions.unsqueeze(-1)).squeeze(-1)  # type: ignore
-            # 3. loss
-            loss = nn.MSELoss()(Q_pred, Q_target)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            
+            # 3. Loss calculation - separate handling for standard vs prioritized replay
+            if prioritized_replay:
+                # === PRIORITIZED EXPERIENCE REPLAY ===
+                # Calculate TD errors for priority updates
+                td_errors = torch.abs(Q_pred - Q_target).detach()
+                
+                # Apply importance sampling weights for unbiased learning
+                elementwise_loss = nn.MSELoss(reduction='none')(Q_pred, Q_target)
+                weighted_loss = elementwise_loss * importance_weights
+                loss = weighted_loss.mean()
+                
+                # Optimize network
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                # Update experience priorities based on TD errors
+                if tree_indices is not None:
+                    # Convert tree_indices to list format for priority updates
+                    if hasattr(tree_indices, 'tolist'):
+                        tree_indices_list = tree_indices.tolist()
+                    else:
+                        tree_indices_list = list(tree_indices)
+                    buffer.update_priorities(tree_indices_list, td_errors.cpu().numpy())  # type: ignore
+                    
+            else:
+                # === STANDARD EXPERIENCE REPLAY ===
+                # Simple MSE loss without importance sampling weights
+                loss = nn.MSELoss()(Q_pred, Q_target)
+                
+                # Optimize network
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
             
             # sync target network periodically
             if frame_idx % 1000 == 0:
@@ -324,6 +394,11 @@ def train(env, config):
                 print(f"Frame {frame_idx}, (episode {episode_idx}): train reward {episode_reward:.2f}, epsilon {epsilon:.2f}")
                 writer.add_scalar("train/epsilon", epsilon, frame_idx)
                 writer.add_scalar("train/reward", episode_reward, frame_idx)
+                
+                # Log prioritized replay metrics
+                if prioritized_replay:
+                    writer.add_scalar("prioritized_replay/beta", buffer.beta, frame_idx)  # type: ignore
+                    writer.add_scalar("prioritized_replay/max_priority", buffer.max_priority, frame_idx)  # type: ignore
 
                 # evaluate deterministic (zero-epsilon) periodically
                 if episode_idx % eval_episode_interval == 0:
