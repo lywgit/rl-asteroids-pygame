@@ -35,6 +35,74 @@ class ExperienceBuffer:
             out = (torch.tensor(x, device=device) for x in out)
         return out
     
+    def sample_n_step(self, batch_size: int, n_steps: int, gamma: float, 
+                      as_torch_tensor: bool = False, device='cpu'):
+        """
+        Sample experiences and compute n-step returns on-the-fly.
+        
+        Args:
+            batch_size: Number of experiences to sample
+            n_steps: Number of steps for n-step returns (e.g., 3 for 3-step)
+            gamma: Discount factor
+            as_torch_tensor: Whether to return torch tensors
+            device: Device for torch tensors
+            
+        Returns:
+            Same format as sample() but with n-step rewards and appropriate next_obs
+        """
+        # Can only sample from experiences that have at least n_steps lookahead
+        # (or until episode termination)
+        max_start_idx = len(self.buffer) - 1 # minimum, we need the current state
+
+        if max_start_idx < 0:
+            raise ValueError("Buffer size is too small for the requested n_steps")
+        
+        # Sample starting indices - we'll handle n-step computation per sample
+        indices = np.random.choice(max_start_idx + 1, batch_size, replace=False)
+        
+        # Build n-step experiences
+        n_step_experiences = []
+        
+        for idx in indices:
+            # Get the starting experience
+            start_exp = current_exp = self.buffer[idx]
+            
+            # Compute n-step return and find appropriate next_obs
+            n_step_reward = 0.0
+            discount = 1.0
+            
+            # Look ahead up to n_steps or until episode end
+            for step in range(n_steps):
+                if idx + step >= len(self.buffer):
+                    # Reached end of buffer, can't look further
+                    break
+                    
+                current_exp = self.buffer[idx + step]
+                # Add discounted reward
+                n_step_reward += discount * float(current_exp.reward)
+                discount *= gamma
+                
+                # If this step is terminal, stop here
+                if current_exp.done:
+                    break
+            
+            # Create n-step experience using original obs/action but n-step reward/next_obs
+            # done and next_obs are now consistent (both from the last processed step)
+            n_step_exp = Experience(
+                obs=start_exp.obs,
+                action=start_exp.action,
+                reward=np.array(n_step_reward, dtype=np.float32),
+                done=current_exp.done,
+                next_obs=current_exp.next_obs
+            )
+            n_step_experiences.append(n_step_exp)
+        
+        # Convert to the same format as regular sample()
+        out = (np.stack(x) for x in zip(*n_step_experiences))
+        if as_torch_tensor:
+            out = (torch.tensor(x, device=device) for x in out)
+        return out
+    
     def get_experience(self, index: int) -> Experience:
         """Get a single experience by index for memory-efficient access"""
         return self.buffer[index]

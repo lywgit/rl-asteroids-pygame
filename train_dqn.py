@@ -81,7 +81,10 @@ def get_default_config() -> dict:
         'priority_alpha': 0.6,         # Priority exponent (0=uniform, 1=full priority)
         'priority_beta': 0.4,          # Importance sampling correction exponent
         'priority_beta_increment': 0.0001,  # Beta annealing rate per sample
-        'priority_epsilon': 1e-6       # Small constant to avoid zero priorities
+        'priority_epsilon': 1e-6,      # Small constant to avoid zero priorities
+        # Multi-step learning settings
+        'n_step_learning': False,      # Enable n-step learning
+        'n_steps': 3                   # Number of steps for n-step returns
     }
 
 
@@ -247,6 +250,10 @@ def train(env, config):
     # Create appropriate buffer type based on configuration
     prioritized_replay = config.get('prioritized_replay', False)
     
+    # N-step learning configuration
+    n_step_learning = config.get('n_step_learning', False)
+    n_steps = config.get('n_steps', 1)
+    
     hyperparameters = {
         "game": game,
         "buffer_size": buffer_size,
@@ -264,18 +271,21 @@ def train(env, config):
         "priority_alpha": config.get('priority_alpha', 0.6) if prioritized_replay else 0.0,
         "priority_beta": config.get('priority_beta', 0.4) if prioritized_replay else 0.0,
         "priority_beta_increment": config.get('priority_beta_increment', 0.0001) if prioritized_replay else 0.0,
-        "priority_epsilon": config.get('priority_epsilon', 1e-6) if prioritized_replay else 0.0
+        "priority_epsilon": config.get('priority_epsilon', 1e-6) if prioritized_replay else 0.0,
+        "n_step_learning": n_step_learning,
+        "n_steps": n_steps
         }
     metrics = {
         "best_eval_reward": float("-inf")
     }
+    # Initialize priority parameters (used even if prioritized_replay is False for logging)
+    priority_alpha = float(config.get('priority_alpha', 0.6))
+    priority_beta = float(config.get('priority_beta', 0.4))
+    priority_beta_increment = float(config.get('priority_beta_increment', 0.0001))
+    priority_epsilon = float(config.get('priority_epsilon', 1e-6))
+    
     if prioritized_replay:
         print("Using Prioritized Experience Replay")
-        priority_alpha = float(config.get('priority_alpha', 0.6))
-        priority_beta = float(config.get('priority_beta', 0.4))
-        priority_beta_increment = float(config.get('priority_beta_increment', 0.0001))
-        priority_epsilon = float(config.get('priority_epsilon', 1e-6))
-        
         buffer = PrioritizedExperienceBuffer(
             capacity=buffer_size,
             alpha=priority_alpha,
@@ -285,6 +295,11 @@ def train(env, config):
         )
     else:
         buffer = ExperienceBuffer(capacity=buffer_size)
+    
+    if n_step_learning:
+        print(f"Using {n_steps}-step learning")
+    else:
+        print("Using standard 1-step learning")
     
     agent = Agent(env, buffer) # when agent play step, it updates the buffer by default
 
@@ -319,25 +334,38 @@ def train(env, config):
             episode_reward = agent.play_step(net, epsilon=epsilon, device=device)
 
 
-            # Sample from buffer - handle both standard and prioritized replay
+            # Sample from buffer - handle both standard and prioritized replay with optional n-step
             if prioritized_replay:
-                # Prioritized sampling returns: (tensors, tree_indices, importance_weights)
-                (obs, actions, rewards, dones, next_obs), tree_indices, importance_weights = buffer.sample(
-                    batch_size=batch_size, as_torch_tensor=True, device=device)
+                if n_step_learning:
+                    # Prioritized n-step sampling
+                    (obs, actions, rewards, dones, next_obs), tree_indices, importance_weights = buffer.sample_n_step(
+                        batch_size=batch_size, n_steps=n_steps, gamma=gamma, as_torch_tensor=True, device=device)
+                else:
+                    # Standard prioritized sampling
+                    (obs, actions, rewards, dones, next_obs), tree_indices, importance_weights = buffer.sample(
+                        batch_size=batch_size, as_torch_tensor=True, device=device)
             else:
-                # Standard uniform sampling
-                obs, actions, rewards, dones, next_obs = buffer.sample(
-                    batch_size=batch_size, as_torch_tensor=True, device=device)
+                if n_step_learning:
+                    # Standard n-step sampling
+                    obs, actions, rewards, dones, next_obs = buffer.sample_n_step(
+                        batch_size=batch_size, n_steps=n_steps, gamma=gamma, as_torch_tensor=True, device=device)
+                else:
+                    # Standard uniform sampling
+                    obs, actions, rewards, dones, next_obs = buffer.sample(
+                        batch_size=batch_size, as_torch_tensor=True, device=device)
                 importance_weights = torch.ones(batch_size, device=device)  # Uniform weights
                 tree_indices = None  # Not needed for standard replay
             
             # Train online network
-            # 1. target/actual Q(s,a) = reward + gamma * max_a{tgt_net(next_state)}
+            # 1. target/actual Q(s,a) = reward + gamma^n * max_a{tgt_net(next_state)}
+            # For n-step learning, use gamma^n_steps since rewards already contain n-step discounted sum
+            discount_factor = gamma ** n_steps if n_step_learning else gamma
+            
             if double_dqn:
                 next_actions = net(next_obs).argmax(dim=1, keepdim=True)
-                Q_target = rewards + gamma * tgt_net(next_obs).gather(1, next_actions).squeeze(-1) * (~dones)
+                Q_target = rewards + discount_factor * tgt_net(next_obs).gather(1, next_actions).squeeze(-1) * (~dones)
             else:
-                Q_target = rewards + gamma * tgt_net(next_obs).max(dim=1)[0] * (~dones) # if done set to 0
+                Q_target = rewards + discount_factor * tgt_net(next_obs).max(dim=1)[0] * (~dones) # if done set to 0
             Q_target = Q_target.detach()
             
             # 2. current/predicted Q(s,a) = net(state)_action

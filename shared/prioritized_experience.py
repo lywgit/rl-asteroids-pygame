@@ -277,6 +277,121 @@ class PrioritizedExperienceBuffer(ExperienceBuffer):
         else:
             return experiences, tree_indices, weights
     
+    def sample_n_step(self, 
+                      batch_size: int, 
+                      n_steps: int, 
+                      gamma: float,
+                      as_torch_tensor: bool = False, 
+                      device: str = 'cpu') -> Any:
+        """
+        Sample batch of experiences with prioritized sampling and compute n-step returns.
+        
+        Args:
+            batch_size: Number of experiences to sample
+            n_steps: Number of steps for n-step returns
+            gamma: Discount factor
+            as_torch_tensor: Whether to return tensors instead of numpy arrays
+            device: Device for tensors if as_torch_tensor=True
+            
+        Returns:
+            (experiences, tree_indices, importance_weights) with n-step returns
+        """
+        if len(self.tree) == 0:
+            raise ValueError("Cannot sample from empty buffer")
+        
+        # Sample experiences using prioritized sampling
+        n_step_experiences = []
+        tree_indices = []
+        priorities = []
+        
+        # Divide priority range into segments for stratified sampling
+        segment_size = self.tree.total() / batch_size
+        
+        for i in range(batch_size):
+            # Sample uniformly within each segment
+            min_val = segment_size * i
+            max_val = segment_size * (i + 1)
+            sample_value = np.random.uniform(min_val, max_val)
+            
+            # Get experience corresponding to this priority value
+            tree_idx, priority, start_exp = self.tree.sample(sample_value)
+            
+            # Convert tree index to data buffer index
+            data_idx = tree_idx - (self.tree.capacity - 1)
+            
+            # Use the same clean logic as standard buffer
+            current_exp = start_exp
+            
+            # Compute n-step return
+            n_step_reward = 0.0
+            discount = 1.0
+            
+            # Look ahead up to n_steps or until episode end
+            for step in range(n_steps):
+                # Calculate circular buffer index
+                current_data_idx = (data_idx + step) % self.tree.capacity
+                
+                # Check if we've wrapped around to data that's older than our start
+                # In a circular buffer, we can't go beyond the "newest" data
+                if self.tree.n_entries == self.tree.capacity:
+                    # Buffer is full - check if we've wrapped past the write boundary
+                    # If we go from (write_idx-1) to write_idx, we've wrapped to oldest data
+                    if step > 0 and current_data_idx == self.tree.write_idx:
+                        # We've wrapped to the oldest data, which breaks chronological order
+                        break
+                else:
+                    # Buffer not full - simple boundary check
+                    if current_data_idx >= self.tree.n_entries:
+                        break
+                
+                # Get experience at current step
+                current_exp = self.tree.data[current_data_idx]
+                if current_exp is None:
+                    break
+                
+                # Add discounted reward
+                n_step_reward += discount * float(current_exp.reward)
+                discount *= gamma
+                
+                # If this step is terminal, stop here
+                if current_exp.done:
+                    break
+            
+            # Create n-step experience using clean logic
+            from .experience import Experience
+            n_step_exp = Experience(
+                obs=start_exp.obs,
+                action=start_exp.action,
+                reward=np.array(n_step_reward, dtype=np.float32),
+                done=current_exp.done,
+                next_obs=current_exp.next_obs
+            )
+            
+            n_step_experiences.append(n_step_exp)
+            tree_indices.append(tree_idx)
+            priorities.append(priority)
+        
+        # Calculate importance sampling weights
+        priorities = np.array(priorities)
+        sampling_probabilities = priorities / self.tree.total()
+        
+        # IS weights = (N * P(i))^(-beta) / max_weight (for normalization)
+        weights = np.power(len(self.tree) * sampling_probabilities, -self.beta)
+        weights /= weights.max()  # Normalize weights
+        
+        # Increment beta (anneal towards 1.0)
+        self.beta = min(1.0, self.beta + self.beta_increment)
+        
+        # Return prioritized sampling format
+        if as_torch_tensor:
+            # Convert experiences to tensor format
+            obs, actions, rewards, dones, next_obs = self._experiences_to_tensors(
+                n_step_experiences, device)
+            return (obs, actions, rewards, dones, next_obs), tree_indices, torch.tensor(
+                weights, dtype=torch.float32, device=device)
+        else:
+            return n_step_experiences, tree_indices, weights
+
     def update_priorities(self, tree_indices: List[int], td_errors: np.ndarray) -> None:
         """
         Update priorities for experiences based on new TD-errors.
