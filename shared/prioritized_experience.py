@@ -86,7 +86,7 @@ class SumTree:
     
     def _propagate(self, tree_idx: int, change: float) -> None:
         """
-        Propagate priority change up to the root.
+        Recursively propagate priority change up to the root.
         
         Args:
             tree_idx: Starting tree index
@@ -119,7 +119,7 @@ class SumTree:
     
     def _retrieve(self, tree_idx: int, value: float) -> int:
         """
-        Retrieve leaf index corresponding to the given cumulative value.
+        Recursively retrieve leaf index corresponding to the given cumulative value.
         
         Args:
             tree_idx: Current tree index (start with 0 for root)
@@ -190,10 +190,10 @@ class PrioritizedExperienceBuffer(ExperienceBuffer):
         """
         # Don't call parent __init__ as we use different storage
         self.capacity = capacity
-        self.alpha = alpha
-        self.beta = beta
-        self.beta_increment = beta_increment
-        self.epsilon = epsilon
+        self.alpha = float(alpha)
+        self.beta = float(beta)
+        self.beta_increment = float(beta_increment)
+        self.epsilon = float(epsilon)
         
         # Initialize sum tree
         self.tree = SumTree(capacity)
@@ -305,8 +305,20 @@ class PrioritizedExperienceBuffer(ExperienceBuffer):
         if td_error is None:
             return self.max_priority
         
+        # Ensure td_error is a scalar float
+        try:
+            # Handle numpy scalars and arrays
+            if hasattr(td_error, 'item') and callable(getattr(td_error, 'item')):
+                td_error_val = float(td_error.item())  # type: ignore
+            else:
+                td_error_val = float(td_error)
+        except (ValueError, TypeError) as e:
+            # Fallback to max_priority if conversion fails
+            print(f"Warning: Could not convert TD error {td_error} to float: {e}")
+            return self.max_priority
+        
         # Priority = (|TD-error| + epsilon)^alpha
-        return (abs(td_error) + self.epsilon) ** self.alpha
+        return (abs(td_error_val) + self.epsilon) ** self.alpha
     
     def _experiences_to_tensors(self, experiences: List[Experience], device: str):
         """Convert list of experiences to tensor format."""
@@ -324,23 +336,44 @@ class PrioritizedExperienceBuffer(ExperienceBuffer):
         return obs, actions, rewards, dones, next_obs
     
     # Implement methods for compatibility with base ExperienceBuffer
-    def save_buffer_to_npz(self, file_path: str) -> None:
-        """Save buffer to NPZ format (convert from tree structure)."""
+    def save_buffer_to_npz(self, file_path: str, chunk_size: int = 1000) -> None:
+        """Save buffer to NPZ format with chunked processing to avoid memory spikes."""
         if len(self.tree) == 0:
             print("Warning: Cannot save empty buffer")
             return
         
-        experiences = [self.tree.data[i] for i in range(len(self.tree))]
-        obs = np.stack([exp.obs for exp in experiences])
-        actions = np.array([exp.action for exp in experiences])
-        rewards = np.array([exp.reward for exp in experiences])
-        dones = np.array([exp.done for exp in experiences])
-        next_obs = np.stack([exp.next_obs for exp in experiences])
+        buffer_size = len(self.tree)
+        
+        # Pre-allocate arrays to avoid repeated memory allocations
+        sample_exp = self.tree.data[0]
+        obs_shape = (buffer_size,) + sample_exp.obs.shape
+        next_obs_shape = (buffer_size,) + sample_exp.next_obs.shape
+        
+        obs = np.empty(obs_shape, dtype=sample_exp.obs.dtype)
+        actions = np.empty(buffer_size, dtype=type(sample_exp.action))
+        rewards = np.empty(buffer_size, dtype=type(sample_exp.reward))
+        dones = np.empty(buffer_size, dtype=bool)
+        next_obs = np.empty(next_obs_shape, dtype=sample_exp.next_obs.dtype)
+        
+        # Fill arrays in chunks to reduce peak memory usage
+        for start_idx in range(0, buffer_size, chunk_size):
+            end_idx = min(start_idx + chunk_size, buffer_size)
+            chunk_experiences = [self.tree.data[i] for i in range(start_idx, end_idx)]
+            
+            # Extract and assign chunk data
+            obs[start_idx:end_idx] = np.stack([exp.obs for exp in chunk_experiences])
+            actions[start_idx:end_idx] = [exp.action for exp in chunk_experiences]
+            rewards[start_idx:end_idx] = [exp.reward for exp in chunk_experiences]
+            dones[start_idx:end_idx] = [exp.done for exp in chunk_experiences]
+            next_obs[start_idx:end_idx] = np.stack([exp.next_obs for exp in chunk_experiences])
+            
+            # Clear chunk from memory
+            del chunk_experiences
         
         np.savez_compressed(file_path, 
                            obs=obs, action=actions, reward=rewards, 
                            done=dones, next_obs=next_obs)
-        print(f"Saved prioritized buffer to {file_path}, size: {len(self.tree)}")
+        print(f"Saved prioritized buffer to {file_path}, size: {buffer_size}")
     
     def load_buffer_from_npz(self, file_path: str) -> None:
         """Load buffer from NPZ format (all experiences get max priority)."""
@@ -351,8 +384,8 @@ class PrioritizedExperienceBuffer(ExperienceBuffer):
                 self.append(experience)  # Uses max priority
         print(f"Loaded buffer from {file_path} into prioritized buffer, size: {len(self.tree)}")
     
-    def save_buffer_to_hdf5(self, file_path: str) -> None:
-        """Save buffer to HDF5 format."""
+    def save_buffer_to_hdf5(self, file_path: str, chunk_size: int = 1000) -> None:
+        """Save buffer to HDF5 format with chunked writing to avoid memory spikes."""
         try:
             import h5py
         except ImportError:
@@ -364,23 +397,49 @@ class PrioritizedExperienceBuffer(ExperienceBuffer):
         
         with h5py.File(file_path, 'w') as f:
             buffer_size = len(self.tree)
-            experiences = [self.tree.data[i] for i in range(buffer_size)]
             
-            # Extract data
-            obs = np.stack([exp.obs for exp in experiences])
-            actions = np.array([exp.action for exp in experiences])
-            rewards = np.array([exp.reward for exp in experiences])
-            dones = np.array([exp.done for exp in experiences])
-            next_obs = np.stack([exp.next_obs for exp in experiences])
-            priorities = np.array([self.tree.get_priority(i) for i in range(buffer_size)])
+            # Get sample experience to determine shapes
+            sample_exp = self.tree.data[0]
+            obs_shape = (buffer_size,) + sample_exp.obs.shape
+            next_obs_shape = (buffer_size,) + sample_exp.next_obs.shape
             
-            # Save datasets
-            f.create_dataset('obs', data=obs, compression='gzip')
-            f.create_dataset('action', data=actions, compression='gzip')
-            f.create_dataset('reward', data=rewards, compression='gzip')
-            f.create_dataset('done', data=dones, compression='gzip')
-            f.create_dataset('next_obs', data=next_obs, compression='gzip')
-            f.create_dataset('priorities', data=priorities, compression='gzip')
+            # Create datasets with appropriate shapes and chunking
+            obs_ds = f.create_dataset('obs', shape=obs_shape, dtype=np.float32, 
+                                    compression='gzip', chunks=True)
+            actions_ds = f.create_dataset('action', shape=(buffer_size,), dtype=np.int32,
+                                        compression='gzip', chunks=True)
+            rewards_ds = f.create_dataset('reward', shape=(buffer_size,), dtype=np.float32,
+                                        compression='gzip', chunks=True)
+            dones_ds = f.create_dataset('done', shape=(buffer_size,), dtype=bool,
+                                      compression='gzip', chunks=True)
+            next_obs_ds = f.create_dataset('next_obs', shape=next_obs_shape, dtype=np.float32,
+                                         compression='gzip', chunks=True)
+            priorities_ds = f.create_dataset('priorities', shape=(buffer_size,), dtype=np.float32,
+                                           compression='gzip', chunks=True)
+            
+            # Write data in chunks to avoid memory spikes
+            for start_idx in range(0, buffer_size, chunk_size):
+                end_idx = min(start_idx + chunk_size, buffer_size)
+                chunk_experiences = [self.tree.data[i] for i in range(start_idx, end_idx)]
+                
+                # Extract chunk data
+                chunk_obs = np.stack([exp.obs for exp in chunk_experiences])
+                chunk_actions = np.array([exp.action for exp in chunk_experiences])
+                chunk_rewards = np.array([exp.reward for exp in chunk_experiences])
+                chunk_dones = np.array([exp.done for exp in chunk_experiences])
+                chunk_next_obs = np.stack([exp.next_obs for exp in chunk_experiences])
+                chunk_priorities = np.array([self.tree.get_priority(i) for i in range(start_idx, end_idx)])
+                
+                # Write chunk to HDF5
+                obs_ds[start_idx:end_idx] = chunk_obs
+                actions_ds[start_idx:end_idx] = chunk_actions
+                rewards_ds[start_idx:end_idx] = chunk_rewards
+                dones_ds[start_idx:end_idx] = chunk_dones
+                next_obs_ds[start_idx:end_idx] = chunk_next_obs
+                priorities_ds[start_idx:end_idx] = chunk_priorities
+                
+                # Clear chunk data from memory
+                del chunk_obs, chunk_actions, chunk_rewards, chunk_dones, chunk_next_obs, chunk_priorities
             
             # Save metadata
             f.attrs['buffer_size'] = buffer_size
@@ -390,8 +449,8 @@ class PrioritizedExperienceBuffer(ExperienceBuffer):
             
         print(f"Saved prioritized buffer to HDF5: {file_path}, size: {buffer_size}")
     
-    def load_buffer_from_hdf5(self, file_path: str) -> None:
-        """Load buffer from HDF5 format with priorities."""
+    def load_buffer_from_hdf5(self, file_path: str, chunk_size: int = 1000) -> None:
+        """Load buffer from HDF5 format with chunked reading to avoid memory spikes."""
         try:
             import h5py
         except ImportError:
@@ -400,25 +459,32 @@ class PrioritizedExperienceBuffer(ExperienceBuffer):
         with h5py.File(file_path, 'r') as f:
             buffer_size = int(f.attrs['buffer_size'])  # type: ignore
             
-            # Load data as numpy arrays
-            obs = np.array(f['obs'])  # type: ignore
-            actions = np.array(f['action'])  # type: ignore
-            rewards = np.array(f['reward'])  # type: ignore
-            dones = np.array(f['done'])  # type: ignore
-            next_obs = np.array(f['next_obs'])  # type: ignore
-            
-            # Load priorities if available, otherwise use max priority
-            if 'priorities' in f:
-                priorities = np.array(f['priorities'])  # type: ignore
-            else:
-                priorities = np.full(buffer_size, self.max_priority)
-            
-            # Rebuild tree
-            for i in range(buffer_size):
-                experience = Experience(obs[i], actions[i], rewards[i], 
-                                      dones[i], next_obs[i])
-                # Use stored priority
-                self.tree.add(float(priorities[i]), experience)
+            # Load data in chunks to avoid memory spikes
+            for start_idx in range(0, buffer_size, chunk_size):
+                end_idx = min(start_idx + chunk_size, buffer_size)
+                
+                # Read chunk data from HDF5 and convert to numpy arrays
+                chunk_obs = np.array(f['obs'][start_idx:end_idx])  # type: ignore
+                chunk_actions = np.array(f['action'][start_idx:end_idx])  # type: ignore
+                chunk_rewards = np.array(f['reward'][start_idx:end_idx])  # type: ignore
+                chunk_dones = np.array(f['done'][start_idx:end_idx])  # type: ignore
+                chunk_next_obs = np.array(f['next_obs'][start_idx:end_idx])  # type: ignore
+                
+                # Load priorities if available, otherwise use max priority
+                if 'priorities' in f:
+                    chunk_priorities = np.array(f['priorities'][start_idx:end_idx])  # type: ignore
+                else:
+                    chunk_priorities = np.full(end_idx - start_idx, self.max_priority)
+                
+                # Add experiences to tree chunk by chunk
+                for i in range(len(chunk_obs)):
+                    experience = Experience(chunk_obs[i], chunk_actions[i], chunk_rewards[i], 
+                                          chunk_dones[i], chunk_next_obs[i])
+                    # Use stored priority
+                    self.tree.add(float(chunk_priorities[i]), experience)
+                
+                # Clear chunk data from memory
+                del chunk_obs, chunk_actions, chunk_rewards, chunk_dones, chunk_next_obs, chunk_priorities
             
             # Restore metadata if available
             if 'max_priority' in f.attrs:

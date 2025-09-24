@@ -50,7 +50,7 @@ class ExperienceBuffer:
                 self.buffer.append(Experience(*exp))
         print(f"Load buffer from {file_path}, size: {len(self.buffer)}")
     
-    def save_buffer_to_hdf5(self, file_path: str):
+    def save_buffer_to_hdf5(self, file_path: str, chunk_size: int = 1000):
         """
         Save buffer to HDF5 format for memory-efficient storage of large buffers.
         HDF5 is more memory-efficient than npz for large datasets.
@@ -76,47 +76,47 @@ class ExperienceBuffer:
             obs_dtype = sample_exp.obs.dtype
             
             # Create datasets with chunking and compression for better performance
-            chunk_size = min(1000, buffer_size)  # type: ignore  # Reasonable chunk size
+            effective_chunk_size = min(chunk_size, buffer_size)  # Use provided chunk size, capped by buffer size
             
             obs_dataset = f.create_dataset('obs', 
                                          shape=(buffer_size,) + obs_shape, 
                                          dtype=obs_dtype,
-                                         chunks=(chunk_size,) + obs_shape,
+                                         chunks=(effective_chunk_size,) + obs_shape,
                                          compression='gzip', 
                                          compression_opts=6)
             
             action_dataset = f.create_dataset('action', 
                                             shape=(buffer_size,), 
                                             dtype=np.int64,
-                                            chunks=(chunk_size,),
+                                            chunks=(effective_chunk_size,),
                                             compression='gzip',
                                             compression_opts=6)
             
             reward_dataset = f.create_dataset('reward', 
                                             shape=(buffer_size,), 
                                             dtype=np.float32,
-                                            chunks=(chunk_size,),
+                                            chunks=(effective_chunk_size,),
                                             compression='gzip',
                                             compression_opts=6)
             
             done_dataset = f.create_dataset('done', 
                                           shape=(buffer_size,), 
                                           dtype=np.bool_,
-                                          chunks=(chunk_size,),
+                                          chunks=(effective_chunk_size,),
                                           compression='gzip',
                                           compression_opts=6)
             
             next_obs_dataset = f.create_dataset('next_obs', 
                                               shape=(buffer_size,) + obs_shape, 
                                               dtype=obs_dtype,
-                                              chunks=(chunk_size,) + obs_shape,
+                                              chunks=(effective_chunk_size,) + obs_shape,
                                               compression='gzip',
                                               compression_opts=6)
             
             # Write data in chunks to avoid memory spikes
             print("Writing data in chunks...")
-            for i in range(0, buffer_size, chunk_size):  # type: ignore
-                end_idx = min(i + chunk_size, buffer_size)  # type: ignore
+            for i in range(0, buffer_size, effective_chunk_size):
+                end_idx = min(i + effective_chunk_size, buffer_size)
                 chunk_experiences = [self.buffer[j] for j in range(i, end_idx)]
                 
                 # Stack the chunk data
@@ -133,8 +133,8 @@ class ExperienceBuffer:
                 done_dataset[i:end_idx] = chunk_dones
                 next_obs_dataset[i:end_idx] = chunk_next_obs
                 
-                if (i + chunk_size) % (chunk_size * 10) == 0:  # Progress every 10 chunks
-                    print(f"  Progress: {min(end_idx, buffer_size)}/{buffer_size}")  # type: ignore
+                if (i + effective_chunk_size) % (effective_chunk_size * 10) == 0:  # Progress every 10 chunks
+                    print(f"  Progress: {min(end_idx, buffer_size)}/{buffer_size}")
             
             # Store metadata
             f.attrs['buffer_size'] = buffer_size
@@ -143,7 +143,7 @@ class ExperienceBuffer:
             
         print(f"✅ Successfully saved buffer to HDF5: {file_path}")
 
-    def load_buffer_from_hdf5(self, file_path: str):
+    def load_buffer_from_hdf5(self, file_path: str, chunk_size: int = 1000):
         """
         Load buffer from HDF5 format with memory-efficient streaming.
         """
@@ -155,18 +155,19 @@ class ExperienceBuffer:
         # print(f"Loading buffer from HDF5: {file_path}")
         
         with h5py.File(file_path, 'r') as f:
-            buffer_size = f.attrs['buffer_size']
+            buffer_size_attr = f.attrs['buffer_size']
+            buffer_size = int(buffer_size_attr.item()) if hasattr(buffer_size_attr, 'item') else int(buffer_size_attr)  # type: ignore
             print(f"Buffer size in file: {buffer_size}")
             
             # Clear existing buffer
             self.buffer.clear()
             
             # Load data in chunks to avoid memory spikes
-            chunk_size = min(1000, buffer_size)  # type: ignore
+            effective_chunk_size = min(chunk_size, buffer_size)  # Use provided chunk size, capped by buffer size
             
             print("Loading data in chunks...")
-            for i in range(0, buffer_size, chunk_size):  # type: ignore
-                end_idx = min(i + chunk_size, buffer_size)  # type: ignore
+            for i in range(0, buffer_size, effective_chunk_size):
+                end_idx = min(i + effective_chunk_size, buffer_size)
                 
                 # Read chunk data
                 chunk_obs = f['obs'][i:end_idx]  # type: ignore
@@ -186,7 +187,7 @@ class ExperienceBuffer:
                     )
                     self.buffer.append(exp)
                 
-                if (i + chunk_size) % (chunk_size * 10) == 0:  # Progress every 10 chunks
-                    print(f"  Progress: {min(end_idx, buffer_size)}/{buffer_size}")  # type: ignore
+                if (i + effective_chunk_size) % (effective_chunk_size * 10) == 0:  # Progress every 10 chunks
+                    print(f"  Progress: {min(end_idx, buffer_size)}/{buffer_size}")
         
         print(f"✅ Successfully loaded buffer from HDF5: {file_path}, final size: {len(self.buffer)}")

@@ -271,10 +271,10 @@ def train(env, config):
     }
     if prioritized_replay:
         print("Using Prioritized Experience Replay")
-        priority_alpha = config.get('priority_alpha', 0.6)
-        priority_beta = config.get('priority_beta', 0.4)
-        priority_beta_increment = config.get('priority_beta_increment', 0.0001)
-        priority_epsilon = config.get('priority_epsilon', 1e-6)
+        priority_alpha = float(config.get('priority_alpha', 0.6))
+        priority_beta = float(config.get('priority_beta', 0.4))
+        priority_beta_increment = float(config.get('priority_beta_increment', 0.0001))
+        priority_epsilon = float(config.get('priority_epsilon', 1e-6))
         
         buffer = PrioritizedExperienceBuffer(
             capacity=buffer_size,
