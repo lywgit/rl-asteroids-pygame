@@ -16,7 +16,8 @@ import torch
 import torch.nn as nn
 
 # Import shared components
-from shared.models import AtariDQN, AtariDuelingDQN
+from shared.models import AtariDQN, AtariDuelingDQN, AtariDistributionalDQN, AtariDistributionalDuelingDQN
+from shared.distributional_utils import get_value_range_for_game, categorical_projection, distributional_loss, kl_divergence
 from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map
 from shared.utils import get_device
 from shared.experience import Experience, ExperienceBuffer
@@ -84,7 +85,12 @@ def get_default_config() -> dict:
         'priority_epsilon': 1e-6,      # Small constant to avoid zero priorities
         # Multi-step learning settings
         'n_step_learning': False,      # Enable n-step learning
-        'n_steps': 3                   # Number of steps for n-step returns
+        'n_steps': 3,                  # Number of steps for n-step returns
+        # Distributional Q-learning settings (C51)
+        'distributional_dqn': False,   # Enable distributional Q-learning
+        'n_atoms': 51,                 # Number of atoms for categorical distribution
+        'v_min': None,                 # Minimum value for support (auto-estimated if None)
+        'v_max': None                  # Maximum value for support (auto-estimated if None)
     }
 
 
@@ -184,7 +190,15 @@ class Agent:
         else:
             with torch.no_grad():
                 obs = torch.tensor(self.curr_obs, device=device, dtype=torch.float32).unsqueeze(0) # add batch dimension
-                q_values = net(obs)
+                
+                # Handle both standard and distributional networks
+                if hasattr(net, 'get_q_values'):
+                    # Distributional network - get expected Q-values
+                    q_values = net.get_q_values(obs)
+                else:
+                    # Standard network - direct Q-values
+                    q_values = net(obs)
+                
                 action = q_values.argmax(dim=1).item()
         
         next_obs, reward, truncated, terminated, _ = self.env.step(action)
@@ -303,14 +317,59 @@ def train(env, config):
     
     agent = Agent(env, buffer) # when agent play step, it updates the buffer by default
 
-    if dueling_dqn:
-        print("Using Dueling DQN architecture")
-        net = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
-        tgt_net = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
+    # Distributional Q-learning configuration
+    distributional_dqn = config.get('distributional_dqn', False)
+    if distributional_dqn:
+        n_atoms = config.get('n_atoms', 51)
+        v_min = config.get('v_min', None) 
+        v_max = config.get('v_max', None)
+        
+        # Auto-estimate value range if not provided
+        if v_min is None or v_max is None:
+            estimated_v_min, estimated_v_max = get_value_range_for_game(game, buffer)
+            v_min = v_min if v_min is not None else estimated_v_min
+            v_max = v_max if v_max is not None else estimated_v_max
+        
+        print(f"Using Distributional DQN (C51) with {n_atoms} atoms, support: [{v_min:.1f}, {v_max:.1f}]")
+        
+        if dueling_dqn:
+            print("Using Distributional Dueling DQN architecture")
+            net = AtariDistributionalDuelingDQN(env.observation_space.shape, env.action_space.n, 
+                                               n_atoms=n_atoms, v_min=v_min, v_max=v_max).to(device)
+            tgt_net = AtariDistributionalDuelingDQN(env.observation_space.shape, env.action_space.n,
+                                                   n_atoms=n_atoms, v_min=v_min, v_max=v_max).to(device)
+        else:
+            print("Using Distributional DQN architecture")
+            net = AtariDistributionalDQN(env.observation_space.shape, env.action_space.n,
+                                        n_atoms=n_atoms, v_min=v_min, v_max=v_max).to(device)
+            tgt_net = AtariDistributionalDQN(env.observation_space.shape, env.action_space.n,
+                                            n_atoms=n_atoms, v_min=v_min, v_max=v_max).to(device)
     else:
-        net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
-        tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
+        if dueling_dqn:
+            print("Using Dueling DQN architecture")
+            net = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
+            tgt_net = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
+        else:
+            net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
+            tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
+            
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
+
+    # Update hyperparameters with distributional settings
+    if distributional_dqn:
+        hyperparameters.update({
+            "distributional_dqn": True,
+            "n_atoms": config.get('n_atoms', 51),
+            "v_min": config.get('v_min', -10.0),
+            "v_max": config.get('v_max', 10.0)
+        })
+    else:
+        hyperparameters.update({
+            "distributional_dqn": False,
+            "n_atoms": 0,
+            "v_min": 0.0,
+            "v_max": 0.0
+        })
 
     # Load saved model to continue training
     if not load_model(config, net, tgt_net, device):
@@ -357,54 +416,122 @@ def train(env, config):
                 tree_indices = None  # Not needed for standard replay
             
             # Train online network
-            # 1. target/actual Q(s,a) = reward + gamma^n * max_a{tgt_net(next_state)}
             # For n-step learning, use gamma^n_steps since rewards already contain n-step discounted sum
             discount_factor = gamma ** n_steps if n_step_learning else gamma
             
-            if double_dqn:
-                next_actions = net(next_obs).argmax(dim=1, keepdim=True)
-                Q_target = rewards + discount_factor * tgt_net(next_obs).gather(1, next_actions).squeeze(-1) * (~dones)
-            else:
-                Q_target = rewards + discount_factor * tgt_net(next_obs).max(dim=1)[0] * (~dones) # if done set to 0
-            Q_target = Q_target.detach()
-            
-            # 2. current/predicted Q(s,a) = net(state)_action
-            Q_pred = net(obs).gather(1, actions.unsqueeze(-1)).squeeze(-1)  # type: ignore
-            
-            # 3. Loss calculation - separate handling for standard vs prioritized replay
-            if prioritized_replay:
-                # === PRIORITIZED EXPERIENCE REPLAY ===
-                # Calculate TD errors for priority updates
-                td_errors = torch.abs(Q_pred - Q_target).detach()
+            if distributional_dqn:
+                # === DISTRIBUTIONAL Q-LEARNING (C51) ===
                 
-                # Apply importance sampling weights for unbiased learning
-                elementwise_loss = nn.MSELoss(reduction='none')(Q_pred, Q_target)
-                weighted_loss = elementwise_loss * importance_weights
-                loss = weighted_loss.mean()
+                # 1. Get current state-action distributions
+                current_dist = net(obs)  # [batch_size, n_actions, n_atoms]
+                # Select distributions for taken actions
+                current_action_dist = current_dist.gather(1, actions.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, net.n_atoms)).squeeze(1)
                 
-                # Optimize network
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                
-                # Update experience priorities based on TD errors
-                if tree_indices is not None:
-                    # Convert tree_indices to list format for priority updates
-                    if hasattr(tree_indices, 'tolist'):
-                        tree_indices_list = tree_indices.tolist()
+                # 2. Compute target distributions
+                with torch.no_grad():
+                    next_dist = tgt_net(next_obs)  # [batch_size, n_actions, n_atoms]
+                    
+                    if double_dqn:
+                        # Use online network for action selection
+                        if hasattr(net, 'get_q_values'):
+                            next_q_values = net.get_q_values(next_obs)
+                        else:
+                            next_q_values = (net(next_obs) * net.support).sum(dim=2)
+                        next_actions = next_q_values.argmax(dim=1)
                     else:
-                        tree_indices_list = list(tree_indices)
-                    buffer.update_priorities(tree_indices_list, td_errors.cpu().numpy())  # type: ignore
+                        # Use target network for action selection  
+                        if hasattr(tgt_net, 'get_q_values'):
+                            next_q_values = tgt_net.get_q_values(next_obs)
+                        else:
+                            next_q_values = (next_dist * tgt_net.support).sum(dim=2)
+                        next_actions = next_q_values.argmax(dim=1)
+                    
+                    # Select next action distributions
+                    next_action_dist = next_dist.gather(1, next_actions.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, tgt_net.n_atoms)).squeeze(1)
+                    
+                    # Categorical projection: project T_z onto support
+                    target_dist = categorical_projection(
+                        next_action_dist, rewards, dones, discount_factor,
+                        tgt_net.support, tgt_net.n_atoms, tgt_net.v_min, tgt_net.v_max
+                    )
+                
+                # 3. Compute distributional loss
+                if prioritized_replay:
+                    # === PRIORITIZED EXPERIENCE REPLAY ===
+                    # Use KL divergence for priority updates (better for distributional)
+                    priority_errors = kl_divergence(current_action_dist, target_dist, reduction='none').detach()
+                    
+                    # Cross-entropy loss with importance sampling
+                    elementwise_loss = distributional_loss(current_action_dist, target_dist, reduction='none')
+                    weighted_loss = elementwise_loss * importance_weights
+                    loss = weighted_loss.mean()
+                    
+                    # Optimize network
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    
+                    # Update experience priorities based on KL divergence
+                    if tree_indices is not None:
+                        if hasattr(tree_indices, 'tolist'):
+                            tree_indices_list = tree_indices.tolist()
+                        else:
+                            tree_indices_list = list(tree_indices)
+                        buffer.update_priorities(tree_indices_list, priority_errors.cpu().numpy())
+                        
+                else:
+                    # === STANDARD EXPERIENCE REPLAY ===
+                    loss = distributional_loss(current_action_dist, target_dist)
+                    
+                    # Optimize network
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
                     
             else:
-                # === STANDARD EXPERIENCE REPLAY ===
-                # Simple MSE loss without importance sampling weights
-                loss = nn.MSELoss()(Q_pred, Q_target)
+                # === STANDARD Q-LEARNING ===
                 
-                # Optimize network
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                # 1. Compute target Q-values
+                if double_dqn:
+                    next_actions = net(next_obs).argmax(dim=1, keepdim=True)
+                    Q_target = rewards + discount_factor * tgt_net(next_obs).gather(1, next_actions).squeeze(-1) * (~dones)
+                else:
+                    Q_target = rewards + discount_factor * tgt_net(next_obs).max(dim=1)[0] * (~dones)
+                Q_target = Q_target.detach()
+                
+                # 2. Current Q-values for taken actions
+                Q_pred = net(obs).gather(1, actions.unsqueeze(-1)).squeeze(-1)
+                
+                # 3. MSE loss calculation
+                if prioritized_replay:
+                    # === PRIORITIZED EXPERIENCE REPLAY ===
+                    td_errors = torch.abs(Q_pred - Q_target).detach()
+                    
+                    elementwise_loss = nn.MSELoss(reduction='none')(Q_pred, Q_target)
+                    weighted_loss = elementwise_loss * importance_weights
+                    loss = weighted_loss.mean()
+                    
+                    # Optimize network
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    
+                    # Update experience priorities based on TD errors
+                    if tree_indices is not None:
+                        if hasattr(tree_indices, 'tolist'):
+                            tree_indices_list = tree_indices.tolist()
+                        else:
+                            tree_indices_list = list(tree_indices)
+                        buffer.update_priorities(tree_indices_list, td_errors.cpu().numpy())
+                        
+                else:
+                    # === STANDARD EXPERIENCE REPLAY ===
+                    loss = nn.MSELoss()(Q_pred, Q_target)
+                    
+                    # Optimize network
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
             
             # sync target network periodically
             if frame_idx % 1000 == 0:
