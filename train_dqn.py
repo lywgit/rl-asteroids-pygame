@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 
 # Import shared components
-from shared.models import AtariDQN, AtariDuelingDQN, AtariDistributionalDQN, AtariDistributionalDuelingDQN
+from shared.models import AtariDQN, AtariDistributionalDQN
 from shared.distributional_utils import get_value_range_for_game, categorical_projection, distributional_loss, kl_divergence
 from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map
 from shared.utils import get_device
@@ -317,9 +317,11 @@ def train(env, config):
     
     agent = Agent(env, buffer) # when agent play step, it updates the buffer by default
 
-    # Distributional Q-learning configuration
+    # Create DQN models with clean 2-class architecture
     distributional_dqn = config.get('distributional_dqn', False)
+    
     if distributional_dqn:
+        # Distributional Q-learning configuration
         n_atoms = config.get('n_atoms', 51)
         v_min = config.get('v_min', None) 
         v_max = config.get('v_max', None)
@@ -332,27 +334,38 @@ def train(env, config):
         
         print(f"Using Distributional DQN (C51) with {n_atoms} atoms, support: [{v_min:.1f}, {v_max:.1f}]")
         
-        if dueling_dqn:
-            print("Using Distributional Dueling DQN architecture")
-            net = AtariDistributionalDuelingDQN(env.observation_space.shape, env.action_space.n, 
-                                               n_atoms=n_atoms, v_min=v_min, v_max=v_max).to(device)
-            tgt_net = AtariDistributionalDuelingDQN(env.observation_space.shape, env.action_space.n,
-                                                   n_atoms=n_atoms, v_min=v_min, v_max=v_max).to(device)
-        else:
-            print("Using Distributional DQN architecture")
-            net = AtariDistributionalDQN(env.observation_space.shape, env.action_space.n,
-                                        n_atoms=n_atoms, v_min=v_min, v_max=v_max).to(device)
-            tgt_net = AtariDistributionalDQN(env.observation_space.shape, env.action_space.n,
-                                            n_atoms=n_atoms, v_min=v_min, v_max=v_max).to(device)
+        # Create distributional models
+        net = AtariDistributionalDQN(
+            input_shape=env.observation_space.shape,
+            n_action=env.action_space.n,
+            n_atoms=n_atoms,
+            v_min=v_min,
+            v_max=v_max,
+            dueling=dueling_dqn
+        ).to(device)
+        
+        tgt_net = AtariDistributionalDQN(
+            input_shape=env.observation_space.shape,
+            n_action=env.action_space.n,
+            n_atoms=n_atoms,
+            v_min=v_min,
+            v_max=v_max,
+            dueling=dueling_dqn
+        ).to(device)
     else:
-        if dueling_dqn:
-            print("Using Dueling DQN architecture")
-            net = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
-            tgt_net = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
-        else:
-            net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
-            tgt_net = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
-            
+        # Create standard models
+        net = AtariDQN(
+            input_shape=env.observation_space.shape,
+            n_action=env.action_space.n,
+            dueling=dueling_dqn
+        ).to(device)
+        
+        tgt_net = AtariDQN(
+            input_shape=env.observation_space.shape,
+            n_action=env.action_space.n,
+            dueling=dueling_dqn
+        ).to(device)
+
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 
     # Update hyperparameters with distributional settings
