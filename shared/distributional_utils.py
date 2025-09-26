@@ -82,8 +82,12 @@ def categorical_projection(next_dist, rewards, dones, gamma, support, n_atoms, v
     
     # Distribute probability mass
     # P(l) += p * (u - b) and P(u) += p * (b - l)
-    target_dist_flat.scatter_add_(0, l_indices, next_dist_flat * (u.float() - b).view(-1))
-    target_dist_flat.scatter_add_(0, u_indices, next_dist_flat * (b - l.float()).view(-1))
+    # Use non-in-place operations to avoid gradient issues
+    lower_weights = next_dist_flat * (u.float() - b).view(-1)
+    upper_weights = next_dist_flat * (b - l.float()).view(-1)
+    
+    target_dist_flat = target_dist_flat.scatter_add(0, l_indices, lower_weights)
+    target_dist_flat = target_dist_flat.scatter_add(0, u_indices, upper_weights)
     
     target_dist = target_dist_flat.view(batch_size, n_atoms)
     

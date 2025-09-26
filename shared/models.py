@@ -4,23 +4,41 @@ Neural network models for Atari DQN.
 import torch
 import torch.nn as nn
 from typing import Tuple
+from .noisy_networks import NoisyLinear
+
+
+def _linear_layer(in_features: int, out_features: int, noisy: bool = False, std_init: float = 0.5):
+    """Create either a standard Linear layer or NoisyLinear layer based on the noisy parameter."""
+    if noisy:
+        return NoisyLinear(in_features, out_features, std_init=std_init)
+    else:
+        return nn.Linear(in_features, out_features)
 
 
 class AtariDQN(nn.Module):
     """
-    Standard Atari DQN network with optional dueling architecture.
+    Standard Atari DQN network with optional dueling and noisy architectures.
     Outputs Q-values directly.
     """
     
-    def __init__(self, input_shape: Tuple[int, int, int], n_action: int, dueling: bool = False):
+    def __init__(self, input_shape: Tuple[int, int, int], n_action: int, 
+                 dueling: bool = False, noisy: bool = False, std_init: float = 0.5):
         super(AtariDQN, self).__init__()
         
         self.input_shape = input_shape
         self.n_action = n_action
         self.dueling = dueling
+        self.noisy = noisy
         
         # Print initialization info
-        arch_name = "Dueling DQN" if dueling else "Standard DQN"
+        arch_parts = []
+        if dueling:
+            arch_parts.append("Dueling")
+        if noisy:
+            arch_parts.append("Noisy")
+        arch_parts.append("DQN")
+        
+        arch_name = " ".join(arch_parts)
         print(f"AtariDQN initialized: {arch_name}, input_shape: {input_shape}")
         
         # Shared convolutional layers
@@ -38,21 +56,21 @@ class AtariDQN(nn.Module):
         if dueling:
             # Dueling architecture: separate value and advantage streams
             self.value_stream = nn.Sequential(
-                nn.Linear(conv_out, 512),
+                _linear_layer(conv_out, 512, noisy=noisy, std_init=std_init),
                 nn.ReLU(),
-                nn.Linear(512, 1)  # Single value
+                _linear_layer(512, 1, noisy=noisy, std_init=std_init)  # Single value
             )
             self.advantage_stream = nn.Sequential(
-                nn.Linear(conv_out, 512),
+                _linear_layer(conv_out, 512, noisy=noisy, std_init=std_init),
                 nn.ReLU(),
-                nn.Linear(512, n_action)  # Advantage values
+                _linear_layer(512, n_action, noisy=noisy, std_init=std_init)  # Advantage values
             )
         else:
             # Standard architecture: single output stream
             self.fc = nn.Sequential(
-                nn.Linear(conv_out, 512),
+                _linear_layer(conv_out, 512, noisy=noisy, std_init=std_init),
                 nn.ReLU(),
-                nn.Linear(512, n_action)  # Q-values
+                _linear_layer(512, n_action, noisy=noisy, std_init=std_init)  # Q-values
             )
 
     def _get_conv_out(self, input_shape: Tuple[int, int, int]) -> int:
@@ -91,12 +109,13 @@ class AtariDQN(nn.Module):
 
 class AtariDistributionalDQN(nn.Module):
     """
-    Distributional Atari DQN network with optional dueling architecture.
+    Distributional Atari DQN network with optional dueling and noisy architectures.
     Outputs probability distributions over value atoms.
     """
     
     def __init__(self, input_shape: Tuple[int, int, int], n_action: int, 
-                 n_atoms: int = 51, v_min: float = -10.0, v_max: float = 10.0, dueling: bool = False):
+                 n_atoms: int = 51, v_min: float = -10.0, v_max: float = 10.0, 
+                 dueling: bool = False, noisy: bool = False, std_init: float = 0.5):
         super(AtariDistributionalDQN, self).__init__()
         
         self.input_shape = input_shape
@@ -105,9 +124,17 @@ class AtariDistributionalDQN(nn.Module):
         self.v_min = v_min
         self.v_max = v_max
         self.dueling = dueling
+        self.noisy = noisy
         
         # Print initialization info
-        arch_name = "Distributional Dueling DQN" if dueling else "Distributional DQN"
+        arch_parts = ["Distributional"]
+        if dueling:
+            arch_parts.append("Dueling")
+        if noisy:
+            arch_parts.append("Noisy")
+        arch_parts.append("DQN")
+        
+        arch_name = " ".join(arch_parts)
         print(f"AtariDistributionalDQN initialized: {arch_name} (C51, {n_atoms} atoms), input_shape: {input_shape}")
         print(f"Support range: [{v_min}, {v_max}]")
         
@@ -130,21 +157,21 @@ class AtariDistributionalDQN(nn.Module):
         if dueling:
             # Dueling architecture: separate value and advantage streams
             self.value_stream = nn.Sequential(
-                nn.Linear(conv_out, 512),
+                _linear_layer(conv_out, 512, noisy=noisy, std_init=std_init),
                 nn.ReLU(),
-                nn.Linear(512, n_atoms)  # Value distribution
+                _linear_layer(512, n_atoms, noisy=noisy, std_init=std_init)  # Value distribution
             )
             self.advantage_stream = nn.Sequential(
-                nn.Linear(conv_out, 512),
+                _linear_layer(conv_out, 512, noisy=noisy, std_init=std_init),
                 nn.ReLU(),
-                nn.Linear(512, n_action * n_atoms)  # Advantage distributions
+                _linear_layer(512, n_action * n_atoms, noisy=noisy, std_init=std_init)  # Advantage distributions
             )
         else:
             # Standard architecture: single output stream
             self.fc = nn.Sequential(
-                nn.Linear(conv_out, 512),
+                _linear_layer(conv_out, 512, noisy=noisy, std_init=std_init),
                 nn.ReLU(),
-                nn.Linear(512, n_action * n_atoms)  # Action-value distributions
+                _linear_layer(512, n_action * n_atoms, noisy=noisy, std_init=std_init)  # Action-value distributions
             )
 
     def _get_conv_out(self, input_shape: Tuple[int, int, int]) -> int:
