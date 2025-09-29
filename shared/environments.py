@@ -13,7 +13,7 @@ from gymnasium.wrappers import (
     ClipReward
 )
 from asteroids.gym_env import AsteroidsEnv
-from .wrappers import MultiBinaryToSingleDiscreteAction, MultiBinaryToDiscreteCombinationWrapper, ScaleObservation
+from .wrappers import MultiBinaryToSingleDiscreteAction, MultiBinaryToDiscreteCombinationWrapper, ScaleObservation, AleActionsWrapper
 
 
 atari_name_id_map = {
@@ -59,7 +59,7 @@ def make_atari_env(env_id: str, render_mode: str = "rgb_array", max_episode_step
 
 def make_py_asteroids_env(render_mode: str = "rgb_array", screen_size=(84, 84), grayscale_obs: bool = True, 
                        scale_obs: bool = True, frame_stack: int = 4, clip_reward: bool = True,
-                       action_mode: str = "single"):
+                       action_mode: str = "ale"):
     """
     Create Asteroids environment with preprocessing.
     
@@ -71,7 +71,8 @@ def make_py_asteroids_env(render_mode: str = "rgb_array", screen_size=(84, 84), 
         frame_stack: Number of frames to stack, default 4
         clip_reward: Whether to clip rewards to [-1, 1], default True
         action_mode: Action space mode - "single" for single discrete actions, 
-                    "combination" for discrete combination of all binary actions
+                    "combination" for discrete combination of all binary actions,
+                    "ale" for ALE-compatible 18 discrete actions
     
     Returns:
         Configured Asteroids environment
@@ -93,7 +94,9 @@ def make_py_asteroids_env(render_mode: str = "rgb_array", screen_size=(84, 84), 
         env = MultiBinaryToSingleDiscreteAction(env)
     elif action_mode == "combination":
         env = MultiBinaryToDiscreteCombinationWrapper(env)
+    elif action_mode == "ale":
+        env = AleActionsWrapper(env)
     else:
-        raise ValueError(f"Unknown action_mode: {action_mode}. Use 'single' or 'combination'")
+        raise ValueError(f"Unknown action_mode: {action_mode}. Use 'single', 'combination', or 'ale'")
     
     return env

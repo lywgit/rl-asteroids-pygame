@@ -18,7 +18,7 @@ def main():
        
     # parameters relevant to initial buffer creation
     dueling_dqn = True
-    py_asteroids_action_mode = "combination" # "single" or "combination"
+    py_asteroids_action_mode = "ale" # "ale", "single", or "combination"
     buffer_size = args.size  
     initial_experience_epsilon = 0
 
@@ -32,7 +32,7 @@ def main():
 
     # Initialize environment (same logic as train_dqn.py)
     if game == 'py-asteroids':
-        env = make_py_asteroids_env(action_mode=py_asteroids_action_mode) # "combination" or "single"
+        env = make_py_asteroids_env(action_mode=py_asteroids_action_mode)
     else: 
         env_id = atari_name_id_map.get(game, game)
         if env_id is None:

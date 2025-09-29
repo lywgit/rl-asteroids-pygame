@@ -37,7 +37,7 @@ Develop and train a DQN Agent that can learn to play the custom Py-Asteroids gam
 - [ ] 3.3 Wrap up code as v2.0
   - [x] 3.3.1 Improve model integrity by using model_config
   - [ ] 3.3.2 Add versioning for Py-Asteroids game setup  
-  - [ ] 3.3.3 map actions to ale game actions
+  - [x] 3.3.3 map actions to ale game actions
 - [ ] 3.4 Benchmark on Atari games and Py-Asteroids
 
 ## Phase 4: Further work

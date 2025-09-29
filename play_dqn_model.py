@@ -115,7 +115,7 @@ def main():
     render_mode = "rgb_array" if args.no_render or args.record_video else "human"
     game = str(args.game).lower()
     if game == 'py-asteroids':
-        env = make_py_asteroids_env(render_mode=render_mode, action_mode="combination") # "combination" or "single"
+        env = make_py_asteroids_env(render_mode=render_mode, action_mode="ale") # "ale", "combination", or "single"
     else: 
         env_id = atari_name_id_map.get(game, game)
         try:

@@ -652,7 +652,7 @@ def main():
     # Initialize environment
     game = str(config['game'].lower())
     if game == 'py-asteroids':
-        env = make_py_asteroids_env(action_mode="combination") # "combination" or "single"
+        env = make_py_asteroids_env(action_mode="ale") # "ale", "combination", or "single"
     else: 
         env_id = atari_name_id_map.get(game, game)
         try:
