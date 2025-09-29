@@ -21,50 +21,23 @@ from shared.environments import make_atari_env, make_py_asteroids_env, atari_nam
 from shared.utils import get_device
 from shared.experience import Experience, ExperienceBuffer
 from shared.prioritized_experience import PrioritizedExperienceBuffer
+from shared.model_config import ModelConfig  
+from shared.model_factory import create_model_from_config, save_model_checkpoint
 
 
 def create_dqn_networks(env, config, device):
     """Factory function to create DQN networks based on configuration"""
-    distributional_dqn = config.get('distributional_dqn', False)
-    dueling_dqn = config.get('dueling_dqn', False)
-    noisy_networks = config.get('noisy_networks', False)
-    noisy_std_init = config.get('noisy_std_init', 0.5)
+    # Create model configuration from training config
+    model_config = ModelConfig.from_training_config(config, env)
     
-    common_args = {
-        'input_shape': env.observation_space.shape,
-        'n_action': env.action_space.n,
-        'dueling': dueling_dqn,
-        'noisy': noisy_networks,
-        'std_init': noisy_std_init
-    }
+    # Create both main and target networks with identical architecture
+    net = create_model_from_config(model_config, device)
+    tgt_net = create_model_from_config(model_config, device)
     
-    if distributional_dqn:
-        # Distributional Q-learning configuration
-        n_atoms = config.get('n_atoms', 51)
-        v_min = config.get('v_min', None) 
-        v_max = config.get('v_max', None)
-        
-        # Auto-estimate value range if not provided
-        if v_min is None or v_max is None:
-            estimated_v_min, estimated_v_max = get_value_range_for_game(config['game'], None)
-            v_min = v_min if v_min is not None else estimated_v_min
-            v_max = v_max if v_max is not None else estimated_v_max
-        
-        print(f"Using Distributional DQN (C51) with {n_atoms} atoms, support: [{v_min:.1f}, {v_max:.1f}]")
-        
-        distributional_args = {
-            'n_atoms': n_atoms,
-            'v_min': v_min,
-            'v_max': v_max
-        }
-        
-        net = AtariDistributionalDQN(**common_args, **distributional_args).to(device)
-        tgt_net = AtariDistributionalDQN(**common_args, **distributional_args).to(device)
-    else:
-        net = AtariDQN(**common_args).to(device)
-        tgt_net = AtariDQN(**common_args).to(device)
-        
-    return net, tgt_net
+    # Initialize target network with same weights as main network
+    tgt_net.load_state_dict(net.state_dict())
+    
+    return net, tgt_net, model_config
 
 
 def compute_loss_and_update(net, tgt_net, buffer, batch_size, gamma, n_step_learning, n_steps, 
@@ -397,7 +370,7 @@ class Agent:
                 # Handle both standard and distributional networks
                 if hasattr(net, 'get_q_values'):
                     # Distributional network - get expected Q-values
-                    q_values = net.get_q_values(obs)
+                    q_values = net.get_q_values(obs) # type: ignore
                 else:
                     # Standard network - direct Q-values
                     q_values = net(obs)
@@ -520,7 +493,7 @@ def train(env, config):
     agent = Agent(env, buffer) # when agent play step, it updates the buffer by default
 
     # Create DQN models using factory function
-    net, tgt_net = create_dqn_networks(env, config, device)
+    net, tgt_net, model_config = create_dqn_networks(env, config, device)
     
     # Get distributional and noisy settings for later use
     distributional_dqn = config.get('distributional_dqn', False)
@@ -593,8 +566,19 @@ def train(env, config):
                 # print("Target network updated")
 
             if frame_idx % checkpoint_interval == 0:
+                print("Evaluating...")
+                mean_eval_reward = evaluate_model(agent, net, device, num_episodes=10)
                 checkpoint_path = checkpoint_dir / f"dqn_{frame_idx}.pth"
-                torch.save(net.state_dict(), str(checkpoint_path))
+                training_info = {
+                    'frame_idx': frame_idx,
+                    'episode_idx': episode_idx,
+                    'best_eval_reward': best_eval_reward,
+                    'mean_eval_reward': mean_eval_reward,
+                    'epsilon': epsilon,
+                    'created_at': datetime.now().isoformat(),
+                    'checkpoint_type': 'interval_model'
+                }
+                save_model_checkpoint(net, model_config, training_info, str(checkpoint_path))
 
             # per episode operation 
             if episode_reward is not None:
@@ -620,7 +604,18 @@ def train(env, config):
                         best_eval_reward = max(best_eval_reward, mean_eval_reward)
                         best_eval_reward_frame_idx = frame_idx
                         print("New best evaluation reward:", mean_eval_reward, "update dqn_best checkpoint")
-                        torch.save(net.state_dict(), checkpoint_dir / f"dqn_best.pth")
+                        
+                        # Save best model with full metadata
+                        training_info = {
+                            'frame_idx': frame_idx,
+                            'episode_idx': episode_idx,
+                            'best_eval_reward': best_eval_reward,
+                            'mean_eval_reward': mean_eval_reward,
+                            'epsilon': epsilon,
+                            'created_at': datetime.now().isoformat(),
+                            'checkpoint_type': 'best_model'
+                        }
+                        save_model_checkpoint(net, model_config, training_info, str(checkpoint_dir / f"dqn_best.pth"))
                 
                 
     except KeyboardInterrupt:

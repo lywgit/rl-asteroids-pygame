@@ -17,21 +17,31 @@ import ale_py
 from gymnasium.wrappers import RecordVideo
 
 # Import shared components
-from shared.models import AtariDQN, AtariDuelingDQN
 from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map
 from shared.utils import get_device
+from shared.model_factory import load_model_checkpoint
 
 
 def load_model(model_path: str, env, device: str):
-    """Load a trained DQN model"""
+    """Load a trained DQN model with automatic architecture detection"""
     try:
-        model = AtariDuelingDQN(env.observation_space.shape, env.action_space.n).to(device)
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        model, model_config, training_info = load_model_checkpoint(model_path, env, device)
+        model.eval()
+        
+        # Display model information
+        print(f"🏗️  Model Architecture: {model_config.get_architecture_name()}")
+        if model_config.game:
+            print(f"🎮 Trained on: {model_config.game}")
+        if training_info.get('best_eval_reward'):
+            print(f"🏆 Best evaluation reward: {training_info['best_eval_reward']:.2f}")
+        if training_info.get('frame_idx'):
+            print(f"📊 Training frames: {training_info['frame_idx']:,}")
+            
+        return model
+        
     except Exception as e:
-        model = AtariDQN(env.observation_space.shape, env.action_space.n).to(device)
-        model.load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-    return model
+        print(f"❌ Error loading model: {e}")
+        raise
 
 
 def play_game(game, env, model, device: str, num_episodes: int = 5, delay: float = 0.0):
@@ -51,7 +61,12 @@ def play_game(game, env, model, device: str, num_episodes: int = 5, delay: float
             
             # Get action from model (greedy policy - no exploration)
             with torch.no_grad():
-                q_values = model(obs_tensor)
+                # Use get_q_values() method to handle both standard and distributional models
+                if hasattr(model, 'get_q_values'):
+                    q_values = model.get_q_values(obs_tensor)
+                else:
+                    # Fallback for models without get_q_values method
+                    q_values = model(obs_tensor)
                 action = q_values.argmax(dim=1).item()
             if game == 'asteroids': # disable DOWN and DOWNFIRE
                 if action in (5, 11):
