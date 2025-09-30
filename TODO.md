@@ -1,16 +1,16 @@
 # Asteroids AI Project Development TODO list
 
-## Done
-
-- [x] initial development of rainbow dqn techniques
 
 ## Tasks
-ROADMAP 3.3.1:
-- [ ] Refactor code to use model_config for better MLOps.
-    - [ ] model checkpoint should be saved with proper config information so when loaded it can be correctly initialized accordingly and automatically.  
-    - [ ] make sure models of all different dqn technique combinations (dueling x noisy x distributional) can be save load correctly.
-    - [ ] update play_dqn_model.py.    
-- [ ] fix print/log messages for noisy network (not epsilon but other better metrics)
+Context: ROADMAP 3.3.2 Add versioning for Py-Asteroids game setup  
+
+currently I use py-asteroids as the game name for the custom py-asteroids game
+To avoid confusion when further investigating effects of game setup on the difficulty for agents, I want to have exact versioning on the setups.
+The important configurations are set in asteroids/entities/constants.py.
+they are imported by other scripts of the asteroids game.
+I want to be able to be able to feeze current setup/configuration as py-asteroids-v1, and increase the version when I need to update or extend the game.
+- [x] find a way to organize game versioning (ex constants_v1.py  constants_v2.py and let other import by version at run time according to version?) 
+- [x] I have create a variable in py_asteroids_name_id_map
 
 
 ## Backlog
@@ -19,7 +19,9 @@ ROADMAP 3.3.1:
     - [ ] evaluate reward
     - [ ] compare hyperparameters
     - [ ] record best video for demo
-
+- [ ] py-asteroids game version and action mapping
+- [ ] fix print/log messages for noisy network (not epsilon but other better metrics)
+- [ ] Add time information
 
 
 ## Reminder

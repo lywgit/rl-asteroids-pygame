@@ -7,9 +7,9 @@ import pygame
 class AsteroidsEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, config_version='py-asteroids-v1'):
         super().__init__()
-        self.game = AsteroidsGame(target_fps=self.metadata["render_fps"])
+        self.game = AsteroidsGame(target_fps=self.metadata["render_fps"], config_version=config_version)
         # Observation is the rendered RGB screen
         self.observation_shape = (self.game.height, self.game.width, 3)
         self.observation_space = spaces.Box(low=0, high=255, shape=self.observation_shape, dtype=np.uint8)
@@ -146,19 +146,17 @@ class AsteroidsEnv(gym.Env):
 
     def _get_reward(self):
         """Calculate reward including score and survival bonus"""
-        from .entities.constants import SURVIVAL_REWARD_PER_SECOND
-        
         # Incremental score reward (change since last step)
         current_score = self.game.score
         score_reward = float(current_score - self.previous_score)
         self.previous_score = current_score
         total_reward = score_reward         
-        # Survival reward: reward for staying alive longer (disabled when SURVIVAL_REWARD_PER_SECOND=0)
+        # Survival reward: reward for staying alive longer (disabled when survival_reward_per_second=0)
         # Give survival reward every second
-        if SURVIVAL_REWARD_PER_SECOND != 0.0:
+        if self.game.survival_reward_per_second != 0.0:
             survival_reward = 0.0
             if self.game.game_time >= self.game.last_survival_reward_time + 1.0:
-                survival_reward = SURVIVAL_REWARD_PER_SECOND
+                survival_reward = self.game.survival_reward_per_second
                 self.game.last_survival_reward_time = self.game.game_time
                 self.game.total_survival_reward += survival_reward  # Update display counter
             total_reward += survival_reward

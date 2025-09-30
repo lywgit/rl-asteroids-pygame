@@ -15,6 +15,9 @@ from gymnasium.wrappers import (
 from asteroids.gym_env import AsteroidsEnv
 from .wrappers import MultiBinaryToSingleDiscreteAction, MultiBinaryToDiscreteCombinationWrapper, ScaleObservation, AleActionsWrapper
 
+py_asteroids_name_id_map = {
+    'py-asteroids-v1': 'py-asteroids-v1'
+}
 
 atari_name_id_map = {
     'pong': 'ALE/Pong-v5',
@@ -59,7 +62,7 @@ def make_atari_env(env_id: str, render_mode: str = "rgb_array", max_episode_step
 
 def make_py_asteroids_env(render_mode: str = "rgb_array", screen_size=(84, 84), grayscale_obs: bool = True, 
                        scale_obs: bool = True, frame_stack: int = 4, clip_reward: bool = True,
-                       action_mode: str = "ale"):
+                       action_mode: str = "ale", config_version: str = "py-asteroids-v1"):
     """
     Create Asteroids environment with preprocessing.
     
@@ -73,11 +76,12 @@ def make_py_asteroids_env(render_mode: str = "rgb_array", screen_size=(84, 84), 
         action_mode: Action space mode - "single" for single discrete actions, 
                     "combination" for discrete combination of all binary actions,
                     "ale" for ALE-compatible 18 discrete actions
+        config_version: Game configuration version (e.g., "py-asteroids-v1")
     
     Returns:
         Configured Asteroids environment
     """
-    env = AsteroidsEnv(render_mode=render_mode)
+    env = AsteroidsEnv(render_mode=render_mode, config_version=config_version)
     env = MaxAndSkipObservation(env, skip=4)
     env = ResizeObservation(env, shape=screen_size)
     if grayscale_obs:

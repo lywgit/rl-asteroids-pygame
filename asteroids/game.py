@@ -1,16 +1,26 @@
 # --- Final AsteroidsGame using local entities classes ---
 import pygame
-from .entities.constants import SCREEN_WIDTH, SCREEN_HEIGHT, SURVIVAL_REWARD_PER_SECOND, LEVEL_DURATION, ASTEROID_SPEED_INCREASE_PER_LEVEL
+from .entities.game_configs import get_game_config, GameConfig
 from .entities.player import Player
 from .entities.asteroid import Asteroid
 from .entities.shot import Shot
 from .entities.asteroidfield import AsteroidField
 
 class AsteroidsGame:
-    def __init__(self, width=SCREEN_WIDTH, height=SCREEN_HEIGHT, target_fps=60):
-        self.width = width
-        self.height = height
+    def __init__(self, width=None, height=None, target_fps=60, config_version='py-asteroids-v1'):
+        # Get game configuration
+        self.config = get_game_config(config_version)
+        
+        # Use config values with optional overrides
+        self.width = width or self.config.screen_width
+        self.height = height or self.config.screen_height
         self._dt = 1.0 / target_fps  # Calculate timestep from target FPS
+        
+        # Extract config parameters as instance properties for performance
+        self.survival_reward_per_second = self.config.survival_reward_per_second
+        self.level_duration = self.config.level_duration
+        self.asteroid_speed_increase_per_level = self.config.asteroid_speed_increase_per_level
+        
         self.reset()
 
     def reset(self):
@@ -23,8 +33,8 @@ class AsteroidsGame:
         Player.set_groups(self.updatable, self.drawable)
         Shot.set_groups(self.shots, self.updatable, self.drawable)
 
-        self.player = Player(self.width//2, self.height//2)
-        self.asteroid_field = AsteroidField(self.updatable)
+        self.player = Player(self.width//2, self.height//2, self.config)
+        self.asteroid_field = AsteroidField(self.config, self.updatable)
 
         self.score = 0
         self.done = False
@@ -40,7 +50,7 @@ class AsteroidsGame:
         self.game_time += self._dt
         
         # Check for level progression and difficulty increase
-        new_level = int(self.game_time // LEVEL_DURATION) + 1
+        new_level = int(self.game_time // self.level_duration) + 1
         if new_level > self.current_level:
             self.current_level = new_level
             self._increase_difficulty()
@@ -108,11 +118,11 @@ class AsteroidsGame:
     
     def _increase_difficulty(self):
         """Increase game difficulty by making asteroids faster"""
-        speed_multiplier = 1.0 + (ASTEROID_SPEED_INCREASE_PER_LEVEL * (self.current_level - 1))
+        speed_multiplier = 1.0 + (self.asteroid_speed_increase_per_level * (self.current_level - 1))
         
         # Apply speed increase to existing asteroids
         for asteroid in self.asteroids:
-            asteroid.velocity *= (1.0 + ASTEROID_SPEED_INCREASE_PER_LEVEL)
+            asteroid.velocity *= (1.0 + self.asteroid_speed_increase_per_level)
         
         # Update asteroid field to spawn faster asteroids
         self.asteroid_field.speed_multiplier = speed_multiplier
