@@ -231,45 +231,28 @@ def estimate_value_range(buffer, percentile=99.5):
     return float(v_min), float(v_max)
 
 
-# Game-specific value ranges (manually tuned based on game characteristics)
-GAME_VALUE_RANGES = {
-    'py-asteroids': {'v_min': -10.0, 'v_max': 50.0},    # Custom game, moderate scores
-    'pong': {'v_min': -21.0, 'v_max': 21.0},            # Game ends at ±21
-    'beamrider': {'v_min': -10.0, 'v_max': 100.0},      # Variable scoring
-    'enduro': {'v_min': -10.0, 'v_max': 50.0},          # Moderate scores
-    'spaceinvaders': {'v_min': -10.0, 'v_max': 100.0},  # Variable scoring
-    'centipede': {'v_min': -10.0, 'v_max': 100.0},      # Variable scoring
-    'asteroids': {'v_min': -10.0, 'v_max': 100.0},      # Atari Asteroids
-}
-
-
-def get_value_range_for_game(game_name, buffer=None, default_v_min=-10.0, default_v_max=10.0):
+def get_value_range_for_game(game_name, buffer=None):
     """
-    Get appropriate value range for a specific game.
+    Get value range by estimating from buffer or fail if no buffer provided.
     
     Args:
-        game_name: str - Name of the game
+        game_name: str - Name of the game (for logging only)
         buffer: Optional experience buffer for dynamic estimation
-        default_v_min: float - Default minimum value
-        default_v_max: float - Default maximum value
         
     Returns:
         v_min: float - Minimum value for support
         v_max: float - Maximum value for support
+        
+    Raises:
+        ValueError: If buffer is None or estimation fails
     """
-    game_name = game_name.lower()
-    
-    # Try game-specific ranges first
-    if game_name in GAME_VALUE_RANGES:
-        range_config = GAME_VALUE_RANGES[game_name]
-        return range_config['v_min'], range_config['v_max']
-    
-    # Try dynamic estimation from buffer
+    # Only try dynamic estimation from buffer
     if buffer is not None:
         try:
             return estimate_value_range(buffer)
         except Exception as e:
-            print(f"Warning: Failed to estimate value range from buffer: {e}")
+            raise ValueError(f"Failed to estimate value range from buffer for {game_name}: {e}")
     
-    # Fallback to defaults
-    return default_v_min, default_v_max
+    # Fail if no buffer provided
+    raise ValueError(f"No buffer provided for value range estimation for {game_name}. "
+                    f"Please specify v_min and v_max in config or provide a buffer for estimation.")

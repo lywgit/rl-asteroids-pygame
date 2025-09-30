@@ -16,7 +16,7 @@ import torch.nn as nn
 
 # Import shared components
 from shared.models import AtariDQN, AtariDistributionalDQN
-from shared.distributional_utils import get_value_range_for_game, categorical_projection, distributional_loss, kl_divergence
+from shared.distributional_utils import categorical_projection, distributional_loss, kl_divergence
 from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map, py_asteroids_name_id_map
 from shared.utils import get_device
 from shared.experience import Experience, ExperienceBuffer
@@ -263,8 +263,8 @@ def get_default_config() -> dict:
         # Distributional Q-learning settings (C51)
         'distributional_dqn': False,   # Enable distributional Q-learning
         'n_atoms': 51,                 # Number of atoms for categorical distribution
-        'v_min': None,                 # Minimum value for support (auto-estimated if None)
-        'v_max': None,                 # Maximum value for support (auto-estimated if None)
+        'v_min': -10.0,                # Minimum value for support
+        'v_max': 10.0,                 # Maximum value for support
         # Noisy Networks settings
         'noisy_networks': False,       # Enable noisy networks for exploration
         'noisy_std_init': 0.5          # Initial standard deviation for noise

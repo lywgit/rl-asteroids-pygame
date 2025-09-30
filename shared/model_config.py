@@ -44,7 +44,6 @@ class ModelConfig:
     @classmethod
     def from_training_config(cls, config: Dict[str, Any], env) -> 'ModelConfig':
         """Create ModelConfig from training configuration and environment."""
-        from .distributional_utils import get_value_range_for_game
         
         # Extract DQN technique flags
         double_dqn = config.get('double_dqn', False)
@@ -60,18 +59,16 @@ class ModelConfig:
         v_max = None
         if distributional_dqn:
             n_atoms = config.get('n_atoms', 51)
-            v_min_config = config.get('v_min')
-            v_max_config = config.get('v_max')
+            v_min = config.get('v_min')
+            v_max = config.get('v_max')
             
-            if v_min_config is None or v_max_config is None:
-                # Auto-estimate value range
-                game_name = config['game']
-                estimated_v_min, estimated_v_max = get_value_range_for_game(game_name)
-                v_min = v_min_config if v_min_config is not None else estimated_v_min
-                v_max = v_max_config if v_max_config is not None else estimated_v_max
-            else:
-                v_min = v_min_config
-                v_max = v_max_config
+            # For distributional DQN, v_min and v_max cannot be None
+            if v_min is None or v_max is None:
+                raise ValueError(
+                    "For distributional DQN, v_min and v_max must be explicitly specified in config. "
+                    f"Got v_min={v_min}, v_max={v_max}. "
+                    "Set them to appropriate values (e.g., v_min: -10.0, v_max: 10.0) or disable distributional DQN."
+                )
         
         # Other parameters
         noisy_std_init = config.get('noisy_std_init', 0.5)

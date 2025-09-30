@@ -24,13 +24,17 @@ def create_model_from_config(model_config: ModelConfig, device: str = 'cpu') -> 
         Configured model instance
     """
     if model_config.distributional_dqn:
-        # Create distributional model
+        # Create distributional model - v_min/v_max must be provided in config
+        if model_config.v_min is None or model_config.v_max is None:
+            raise ValueError("For distributional DQN, v_min and v_max must be specified in config. "
+                           "Set them explicitly or use distributional_dqn: false.")
+        
         model = AtariDistributionalDQN(
             input_shape=model_config.input_shape,
             n_action=model_config.n_action,
-            n_atoms=model_config.n_atoms or 51,  # Default fallback
-            v_min=model_config.v_min or -10.0,   # Default fallback
-            v_max=model_config.v_max or 10.0,    # Default fallback
+            n_atoms=model_config.n_atoms or 51,  # Only n_atoms has fallback
+            v_min=model_config.v_min,            # Must be provided
+            v_max=model_config.v_max,            # Must be provided
             dueling=model_config.dueling_dqn,
             noisy=model_config.noisy_networks,
             std_init=model_config.noisy_std_init
@@ -231,17 +235,9 @@ def infer_model_config_from_state_dict(state_dict: Dict[str, torch.Tensor], env)
                 n_action = final_layer_size
                 print(f"   Standard DQN: {n_action} actions")
     
-    # For distributional models, we need to estimate v_min/v_max
-    v_min = None
+    # For distributional models, v_min/v_max are handled by ModelConfig validation
+    v_min = None  
     v_max = None
-    if distributional_dqn:
-        from .distributional_utils import get_value_range_for_game
-        # Try to get game name from common patterns, default to generic range
-        try:
-            game_name = 'asteroids'  # Default fallback
-            v_min, v_max = get_value_range_for_game(game_name)
-        except:
-            v_min, v_max = -10.0, 10.0  # Safe default
     
     print(f"   Inferred: {'Distributional ' if distributional_dqn else ''}{'Dueling ' if dueling_dqn else ''}{'Noisy ' if noisy_networks else ''}DQN")
     if distributional_dqn:
