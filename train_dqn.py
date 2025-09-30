@@ -17,7 +17,7 @@ import torch.nn as nn
 # Import shared components
 from shared.models import AtariDQN, AtariDistributionalDQN
 from shared.distributional_utils import get_value_range_for_game, categorical_projection, distributional_loss, kl_divergence
-from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map
+from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map, py_asteroids_name_id_map
 from shared.utils import get_device
 from shared.experience import Experience, ExperienceBuffer
 from shared.prioritized_experience import PrioritizedExperienceBuffer
@@ -651,8 +651,9 @@ def main():
        
     # Initialize environment
     game = str(config['game'].lower())
-    if game == 'py-asteroids':
-        env = make_py_asteroids_env(action_mode="ale") # "ale", "combination", or "single"
+    if game.startswith('py-asteroids'):
+        config_version = py_asteroids_name_id_map.get(game, game) # ex: py-asteroids or py-asteroids-v1
+        env = make_py_asteroids_env(action_mode="ale", config_version=config_version) 
     else: 
         env_id = atari_name_id_map.get(game, game)
         try:

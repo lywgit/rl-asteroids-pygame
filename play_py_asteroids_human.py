@@ -1,14 +1,27 @@
 import time
+import argparse
 import gymnasium as gym
 import pygame
 from asteroids.gym_env import AsteroidsEnv
 
 
 def main():
-    env = AsteroidsEnv(render_mode="human")
-    obs, info = env.reset()
+    parser = argparse.ArgumentParser(description='Play py-asteroids manually with keyboard controls')
+    parser.add_argument('-v', '--version', type=str, default='py-asteroids-v1',
+                        help='Game version to play (default: py-asteroids-v1)')
+    args = parser.parse_args()
+    
+    print(f"🎮 Starting py-asteroids game - Version: {args.version}")
+    
+    try:
+        env = AsteroidsEnv(render_mode="human", config_version=args.version)
+        obs, info = env.reset()
+    except ValueError as e:
+        print(f"❌ Error: {e}")
+        return
     done = False
     running = True
+    print(f"🎯 Game Config: {args.version}")
     print("Controls: Arrow keys to move, Space to shoot, Esc to exit. Close window to exit.")
     while running:
         for event in pygame.event.get():

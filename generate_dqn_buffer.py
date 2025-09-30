@@ -6,19 +6,18 @@ from pathlib import Path
 from train_dqn import Agent
 from shared.experience import Experience, ExperienceBuffer
 from shared.models import AtariDQN, AtariDuelingDQN
-from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map
+from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map, py_asteroids_name_id_map
 
 def main():
     parser = argparse.ArgumentParser(description='Generate DQN experience buffer for training')
     parser.add_argument('game', type=str, help='Game to generate buffer for: py-asteroids, beamrider, or asteroids')
     parser.add_argument('--size', type=int, default=100000, help='Size of the experience buffer')
     args = parser.parse_args()
-    
-    game = args.game.lower()
-       
+
+    game: str = args.game.lower()
+
     # parameters relevant to initial buffer creation
     dueling_dqn = True
-    py_asteroids_action_mode = "ale" # "ale", "single", or "combination"
     buffer_size = args.size  
     initial_experience_epsilon = 0
 
@@ -31,12 +30,11 @@ def main():
     print(f"🎲 Initial epsilon: {initial_experience_epsilon}")
 
     # Initialize environment (same logic as train_dqn.py)
-    if game == 'py-asteroids':
-        env = make_py_asteroids_env(action_mode=py_asteroids_action_mode)
+    if game.startswith('py-asteroids'):
+        config_version = py_asteroids_name_id_map.get(game, game) # ex: py-asteroids or py-asteroids-v1
+        env = make_py_asteroids_env(action_mode="ale", config_version=config_version) 
     else: 
         env_id = atari_name_id_map.get(game, game)
-        if env_id is None:
-            env_id = game
         try:
             env = make_atari_env(env_id)
         except Exception as e:

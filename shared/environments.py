@@ -16,7 +16,7 @@ from asteroids.gym_env import AsteroidsEnv
 from .wrappers import MultiBinaryToSingleDiscreteAction, MultiBinaryToDiscreteCombinationWrapper, ScaleObservation, AleActionsWrapper
 
 py_asteroids_name_id_map = {
-    'py-asteroids-v1': 'py-asteroids-v1'
+    'py-asteroids': 'py-asteroids-v1', # default version
 }
 
 atari_name_id_map = {

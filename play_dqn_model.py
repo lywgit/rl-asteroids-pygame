@@ -17,7 +17,7 @@ import ale_py
 from gymnasium.wrappers import RecordVideo
 
 # Import shared components
-from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map
+from shared.environments import make_atari_env, make_py_asteroids_env, atari_name_id_map, py_asteroids_name_id_map
 from shared.utils import get_device
 from shared.model_factory import load_model_checkpoint
 
@@ -113,20 +113,21 @@ def main():
     
     # Create environment
     render_mode = "rgb_array" if args.no_render or args.record_video else "human"
-    game = str(args.game).lower()
-    if game == 'py-asteroids':
-        env = make_py_asteroids_env(render_mode=render_mode, action_mode="ale") # "ale", "combination", or "single"
+    game: str = args.game.lower()
+    if game.startswith('py-asteroids'):
+        config_version = py_asteroids_name_id_map.get(game, game) # ex: py-asteroids or py-asteroids-v1
+        env = make_py_asteroids_env(action_mode="ale", config_version=config_version) 
     else: 
         env_id = atari_name_id_map.get(game, game)
         try:
-            env = make_atari_env(env_id, render_mode=render_mode, clip_reward=False)
-            print(f"🚀 Created Atari environment: {env_id}")
+            env = make_atari_env(env_id, render_mode=render_mode, clip_reward=False) # No reward clipping for evaluation
+            print(f"🚀 Created Atari environment (without reward clipping): {env_id}")
         except Exception as e:
             raise ValueError(f"Unsupported game: {game}. Error: {e}")
 
     if args.record_video:
         from shared.wrappers import MaxRender
-        env = MaxRender(env) # Smooth rendering for Atari games (particularly Asteroids) to
+        env = MaxRender(env) # Smooth rendering for Atari games (particularly ALE Asteroids)
         name_prefix = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.game}"
         if args.game == 'py-asteroids':
            env.metadata["render_fps"] = 30

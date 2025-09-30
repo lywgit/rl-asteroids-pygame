@@ -10,7 +10,7 @@ The important configurations are set in asteroids/entities/constants.py.
 they are imported by other scripts of the asteroids game.
 I want to be able to be able to feeze current setup/configuration as py-asteroids-v1, and increase the version when I need to update or extend the game.
 - [x] find a way to organize game versioning (ex constants_v1.py  constants_v2.py and let other import by version at run time according to version?) 
-- [x] I have create a variable in py_asteroids_name_id_map
+- [x] I have create a variable in py_asteroids_name_id_map, use it for game mapping
 
 
 ## Backlog
