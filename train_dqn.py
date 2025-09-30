@@ -23,6 +23,7 @@ from shared.experience import Experience, ExperienceBuffer
 from shared.prioritized_experience import PrioritizedExperienceBuffer
 from shared.model_config import ModelConfig  
 from shared.model_factory import create_model_from_config, save_model_checkpoint
+from shared.exploration_metrics import ExplorationMetrics
 
 
 def create_dqn_networks(env, config, device):
@@ -358,24 +359,31 @@ class Agent:
         self.episode_reward = 0.0
         self.curr_obs, _ = self.env.reset()
 
-    def play_step(self, net:nn.Module, epsilon:float = 0.0, device:str="cpu", update_buffer=True) -> None | float:
+    def play_step(self, net:nn.Module, epsilon:float = 0.0, device:str="cpu", update_buffer=True, 
+                  exploration_metrics:ExplorationMetrics|None = None) -> None | float:
         episode_reward = None # return cumulated episode_reward when episode ends else None
-        # choose an action
+        
+        # Get Q-values for action selection and metrics
+        with torch.no_grad():
+            obs = torch.tensor(self.curr_obs, device=device, dtype=torch.float32).unsqueeze(0)
+            
+            # Handle both standard and distributional networks
+            if hasattr(net, 'get_q_values'):
+                # Distributional network - get expected Q-values
+                q_values = net.get_q_values(obs) # type: ignore
+            else:
+                # Standard network - direct Q-values
+                q_values = net(obs)
+        
+        # Choose an action
         if np.random.random() < epsilon:
             action = self.env.action_space.sample()
         else:
-            with torch.no_grad():
-                obs = torch.tensor(self.curr_obs, device=device, dtype=torch.float32).unsqueeze(0) # add batch dimension
-                
-                # Handle both standard and distributional networks
-                if hasattr(net, 'get_q_values'):
-                    # Distributional network - get expected Q-values
-                    q_values = net.get_q_values(obs) # type: ignore
-                else:
-                    # Standard network - direct Q-values
-                    q_values = net(obs)
-                
-                action = q_values.argmax(dim=1).item()
+            action = q_values.argmax(dim=1).item()
+        
+        # Add to exploration metrics if provided
+        if exploration_metrics is not None:
+            exploration_metrics.add_step(action, q_values[0])  # Remove batch dimension
         
         next_obs, reward, truncated, terminated, _ = self.env.step(action)
         is_done = truncated or terminated
@@ -531,6 +539,12 @@ def train(env, config):
     if not load_replay_buffer(config, buffer, agent, net, buffer_size, device):
         return
 
+    # Initialize exploration metrics
+    exploration_metrics = ExplorationMetrics(
+        n_actions=env.action_space.n, 
+        window_size=1000  # Track last 1000 actions
+    )
+
     # start training
     frame_idx = 0
     episode_idx = 0
@@ -542,15 +556,16 @@ def train(env, config):
             
             # Handle exploration: Noisy networks provide built-in exploration
             if noisy_networks:
-                # Use minimal epsilon with noisy networks (they provide exploration)
-                epsilon = 0.01  # Very small epsilon for rare random actions
+                # No epsilon-greedy for noisy networks - they handle exploration internally
+                epsilon = 0.0  # Noisy networks replace epsilon-greedy completely
             else:
                 # Standard epsilon-greedy exploration
                 epsilon = epsilon_start - (epsilon_start - epsilon_end) * (frame_idx / epsilon_decay_frames)
                 epsilon = max(epsilon, epsilon_end)
             
             # play steps and update buffer until an episode is done
-            episode_reward = agent.play_step(net, epsilon=epsilon, device=device)
+            episode_reward = agent.play_step(net, epsilon=epsilon, device=device, 
+                                            exploration_metrics=exploration_metrics)
 
             # Train the network using extracted function
             loss = compute_loss_and_update(
@@ -583,9 +598,56 @@ def train(env, config):
             # per episode operation 
             if episode_reward is not None:
                 episode_idx += 1
-                # logs
-                print(f"Frame {frame_idx}, (episode {episode_idx}): train reward {episode_reward:.2f}, epsilon {epsilon:.2f}")
-                writer.add_scalar("train/epsilon", epsilon, frame_idx)
+                current_time = datetime.now().strftime("%H:%M:%S")
+                
+                # Enhanced logging based on exploration type
+                if noisy_networks:
+                    # Get noise statistics from the network
+                    noise_stats = net.get_noise_stats() if hasattr(net, 'get_noise_stats') else {}
+                    exploration_stats = exploration_metrics.get_exploration_metrics()
+                    
+                    # Enhanced print with noise and exploration info
+                    print(f"[{current_time}] Frame {frame_idx}, Episode {episode_idx}: "
+                          f"reward {episode_reward:.2f}, "
+                          f"action_diversity {exploration_stats.get('action_diversity', 0):.3f}, "
+                          f"noise_scale {noise_stats.get('avg_noise_scale', 0):.4f}, "
+                          f"SNR {noise_stats.get('avg_signal_to_noise_ratio', 0):.2f}")
+                    
+                    # Log noisy network metrics
+                    if noise_stats:
+                        writer.add_scalar("noisy/avg_noise_scale", noise_stats['avg_noise_scale'], frame_idx)
+                        writer.add_scalar("noisy/avg_weight_sigma", noise_stats['avg_weight_sigma'], frame_idx)
+                        writer.add_scalar("noisy/avg_bias_sigma", noise_stats['avg_bias_sigma'], frame_idx)
+                        writer.add_scalar("noisy/avg_signal_to_noise_ratio", noise_stats['avg_signal_to_noise_ratio'], frame_idx)
+                        writer.add_scalar("noisy/min_signal_to_noise_ratio", noise_stats['min_signal_to_noise_ratio'], frame_idx)
+                        writer.add_scalar("noisy/max_signal_to_noise_ratio", noise_stats['max_signal_to_noise_ratio'], frame_idx)
+                    
+                    # Log exploration metrics
+                    writer.add_scalar("exploration/action_entropy", exploration_stats['action_entropy'], frame_idx)
+                    writer.add_scalar("exploration/action_diversity", exploration_stats['action_diversity'], frame_idx)
+                    writer.add_scalar("exploration/q_mean", exploration_stats['q_mean'], frame_idx)
+                    writer.add_scalar("exploration/q_std", exploration_stats['q_std'], frame_idx)
+                    writer.add_scalar("exploration/q_max_mean", exploration_stats['q_max_mean'], frame_idx)
+                    writer.add_scalar("exploration/q_variance", exploration_stats['q_variance'], frame_idx)
+                    
+                    # Log action distribution
+                    for i in range(3):  # Top 3 actions
+                        if f'top_{i+1}_action' in exploration_stats:
+                            writer.add_scalar(f"exploration/top_{i+1}_action_pct", 
+                                            exploration_stats[f'top_{i+1}_action_pct'], frame_idx)
+                
+                else:
+                    # Standard epsilon-greedy logging
+                    exploration_stats = exploration_metrics.get_exploration_metrics()
+                    print(f"[{current_time}] Frame {frame_idx}, Episode {episode_idx}: "
+                          f"reward {episode_reward:.2f}, epsilon {epsilon:.2f}, "
+                          f"action_diversity {exploration_stats.get('action_diversity', 0):.3f}")
+                    
+                    writer.add_scalar("train/epsilon", epsilon, frame_idx)
+                    writer.add_scalar("exploration/action_entropy", exploration_stats['action_entropy'], frame_idx)
+                    writer.add_scalar("exploration/action_diversity", exploration_stats['action_diversity'], frame_idx)
+                
+                # Common logging for all methods
                 writer.add_scalar("train/reward", episode_reward, frame_idx)
                 
                 # Log prioritized replay metrics

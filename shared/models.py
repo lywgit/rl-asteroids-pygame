@@ -105,6 +105,46 @@ class AtariDQN(nn.Module):
     def get_q_values(self, x: torch.Tensor) -> torch.Tensor:
         """Get Q-values from the network (same as forward for standard DQN)."""
         return self.forward(x)
+    
+    def get_noise_stats(self) -> dict:
+        """Get aggregated noise statistics from all NoisyLinear layers."""
+        if not self.noisy:
+            return {}
+        
+        all_stats = []
+        layer_names = []
+        
+        def collect_stats(module, name):
+            if isinstance(module, NoisyLinear):
+                stats = module.get_noise_stats()
+                all_stats.append(stats)
+                layer_names.append(name)
+        
+        # Collect from appropriate architecture
+        if self.dueling:
+            for name, module in self.value_stream.named_modules():
+                collect_stats(module, f"value.{name}")
+            for name, module in self.advantage_stream.named_modules():
+                collect_stats(module, f"advantage.{name}")
+        else:
+            for name, module in self.fc.named_modules():
+                collect_stats(module, f"fc.{name}")
+        
+        if not all_stats:
+            return {}
+        
+        # Aggregate statistics across all noisy layers
+        aggregated = {
+            'layer_count': len(all_stats),
+            'avg_weight_sigma': sum(s['weight_sigma_mean'] for s in all_stats) / len(all_stats),
+            'avg_bias_sigma': sum(s['bias_sigma_mean'] for s in all_stats) / len(all_stats),
+            'avg_noise_scale': sum(s['noise_scale'] for s in all_stats) / len(all_stats),
+            'avg_signal_to_noise_ratio': sum(s['signal_to_noise_ratio'] for s in all_stats) / len(all_stats),
+            'min_signal_to_noise_ratio': min(s['signal_to_noise_ratio'] for s in all_stats),
+            'max_signal_to_noise_ratio': max(s['signal_to_noise_ratio'] for s in all_stats)
+        }
+        
+        return aggregated
 
 
 class AtariDistributionalDQN(nn.Module):
@@ -228,6 +268,46 @@ class AtariDistributionalDQN(nn.Module):
         # support: [n_atoms]
         q_values = torch.sum(probs * torch.as_tensor(self.support).view(1, 1, -1), dim=2)
         return q_values
+    
+    def get_noise_stats(self) -> dict:
+        """Get aggregated noise statistics from all NoisyLinear layers."""
+        if not self.noisy:
+            return {}
+        
+        all_stats = []
+        layer_names = []
+        
+        def collect_stats(module, name):
+            if isinstance(module, NoisyLinear):
+                stats = module.get_noise_stats()
+                all_stats.append(stats)
+                layer_names.append(name)
+        
+        # Collect from appropriate architecture
+        if self.dueling:
+            for name, module in self.value_stream.named_modules():
+                collect_stats(module, f"value.{name}")
+            for name, module in self.advantage_stream.named_modules():
+                collect_stats(module, f"advantage.{name}")
+        else:
+            for name, module in self.fc.named_modules():
+                collect_stats(module, f"fc.{name}")
+        
+        if not all_stats:
+            return {}
+        
+        # Aggregate statistics across all noisy layers
+        aggregated = {
+            'layer_count': len(all_stats),
+            'avg_weight_sigma': sum(s['weight_sigma_mean'] for s in all_stats) / len(all_stats),
+            'avg_bias_sigma': sum(s['bias_sigma_mean'] for s in all_stats) / len(all_stats),
+            'avg_noise_scale': sum(s['noise_scale'] for s in all_stats) / len(all_stats),
+            'avg_signal_to_noise_ratio': sum(s['signal_to_noise_ratio'] for s in all_stats) / len(all_stats),
+            'min_signal_to_noise_ratio': min(s['signal_to_noise_ratio'] for s in all_stats),
+            'max_signal_to_noise_ratio': max(s['signal_to_noise_ratio'] for s in all_stats)
+        }
+        
+        return aggregated
 
 
 # Backward compatibility aliases

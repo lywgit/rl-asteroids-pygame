@@ -82,3 +82,32 @@ class NoisyLinear(nn.Module):
             bias = self.bias_mu
         
         return F.linear(x, weight, bias)
+    
+    def get_noise_stats(self) -> dict:
+        """Get statistics about the current noise levels for logging."""
+        if not self.training:
+            return {
+                'weight_sigma_mean': 0.0,
+                'weight_sigma_std': 0.0, 
+                'bias_sigma_mean': 0.0,
+                'bias_sigma_std': 0.0,
+                'noise_scale': 0.0,
+                'signal_to_noise_ratio': float('inf')
+            }
+        
+        # Current noise magnitudes
+        weight_noise = self.weight_sigma * self.epsilon_output.outer(self.epsilon_input)
+        bias_noise = self.bias_sigma * self.epsilon_output
+        
+        # Signal-to-noise ratios (higher = less exploration)
+        weight_snr = (self.weight_mu.abs().mean() / (self.weight_sigma.abs().mean() + 1e-8)).item()
+        bias_snr = (self.bias_mu.abs().mean() / (self.bias_sigma.abs().mean() + 1e-8)).item()
+        
+        return {
+            'weight_sigma_mean': self.weight_sigma.abs().mean().item(),
+            'weight_sigma_std': self.weight_sigma.std().item(),
+            'bias_sigma_mean': self.bias_sigma.abs().mean().item(), 
+            'bias_sigma_std': self.bias_sigma.std().item(),
+            'noise_scale': (weight_noise.abs().mean() + bias_noise.abs().mean()).item() / 2,
+            'signal_to_noise_ratio': (weight_snr + bias_snr) / 2
+        }

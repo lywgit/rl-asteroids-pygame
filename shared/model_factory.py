@@ -12,7 +12,7 @@ from .model_config import ModelConfig
 from .models import AtariDQN, AtariDistributionalDQN
 
 
-def create_model_from_config(model_config: ModelConfig, device: str = 'cpu') -> nn.Module:
+def create_model_from_config(model_config: ModelConfig, device: str = 'cpu') -> AtariDistributionalDQN | AtariDQN:
     """
     Create a DQN model instance from ModelConfig.
     
