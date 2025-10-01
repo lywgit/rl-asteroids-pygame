@@ -267,7 +267,9 @@ def get_default_config() -> dict:
         'v_max': 10.0,                 # Maximum value for support
         # Noisy Networks settings
         'noisy_networks': False,       # Enable noisy networks for exploration
-        'noisy_std_init': 0.5          # Initial standard deviation for noise
+        'noisy_std_init': 0.5,         # Initial standard deviation for noise
+        # Environment settings
+        'clip_reward': True            # Clip rewards to [-1, 1] range
     }
 
 
@@ -715,11 +717,11 @@ def main():
     game = str(config['game'].lower())
     if game.startswith('py-asteroids'):
         config_version = py_asteroids_name_id_map.get(game, game) # ex: py-asteroids or py-asteroids-v1
-        env = make_py_asteroids_env(action_mode="ale", config_version=config_version) 
+        env = make_py_asteroids_env(action_mode="ale", config_version=config_version, clip_reward=config['clip_reward']) 
     else: 
         env_id = atari_name_id_map.get(game, game)
         try:
-            env = make_atari_env(env_id)
+            env = make_atari_env(env_id, clip_reward=config['clip_reward'])
         except Exception as e:
             raise ValueError(f"Unsupported game: {game}. Error: {e}")
 
