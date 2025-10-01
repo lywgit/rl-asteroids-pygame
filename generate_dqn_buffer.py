@@ -12,14 +12,16 @@ def main():
     parser = argparse.ArgumentParser(description='Generate DQN experience buffer for training')
     parser.add_argument('game', type=str, help='Game to generate buffer for: py-asteroids, beamrider, or asteroids')
     parser.add_argument('--size', type=int, default=100000, help='Size of the experience buffer')
+    parser.add_argument('--clip-reward', action='store_true', help='Clip rewards to [-1, 1] (default: False)')
     args = parser.parse_args()
 
     game: str = args.game.lower()
 
     # parameters relevant to initial buffer creation
-    dueling_dqn = True
-    buffer_size = args.size  
-    initial_experience_epsilon = 0
+    dueling_dqn: bool = True # Doesn't matter much for buffer generation
+    buffer_size: int = args.size  
+    clip_reward: bool = args.clip_reward  # Whether to clip rewards to [-1, 1]
+    initial_experience_epsilon: float = 0 # always set to 0 for initial buffer generation
 
     # Storage format options - use HDF5 for large buffers to avoid memory issues
     use_hdf5 = True  # Set to True for large buffers (>50k), False for small buffers
@@ -32,11 +34,11 @@ def main():
     # Initialize environment (same logic as train_dqn.py)
     if game.startswith('py-asteroids'):
         config_version = py_asteroids_name_id_map.get(game, game) # ex: py-asteroids or py-asteroids-v1
-        env = make_py_asteroids_env(action_mode="ale", config_version=config_version) 
+        env = make_py_asteroids_env(action_mode="ale", config_version=config_version, clip_reward=clip_reward) 
     else: 
         env_id = atari_name_id_map.get(game, game)
         try:
-            env = make_atari_env(env_id)
+            env = make_atari_env(env_id, clip_reward=clip_reward)
         except Exception as e:
             raise ValueError(f"Unsupported game: {game}. Error: {e}")
 
@@ -59,6 +61,9 @@ def main():
 
     current_time = datetime.now().strftime("%Y-%m-%d-%H%M%S")
     buffer_id = f"{game}_{current_time}_{buffer_size}"
+    if clip_reward:
+        buffer_id += "_clip"
+
     save_dir = Path("buffers/")
     save_dir.mkdir(parents=True, exist_ok=True)
 
