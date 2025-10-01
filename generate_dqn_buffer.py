@@ -18,7 +18,7 @@ def main():
     game: str = args.game.lower()
 
     # parameters relevant to initial buffer creation
-    dueling_dqn: bool = True # Doesn't matter much for buffer generation
+    dueling_dqn: bool = True # Doesn't matter for buffer generation
     buffer_size: int = args.size  
     clip_reward: bool = args.clip_reward  # Whether to clip rewards to [-1, 1]
     initial_experience_epsilon: float = 0 # always set to 0 for initial buffer generation

@@ -68,7 +68,7 @@ def play_game(game, env, model, device: str, num_episodes: int = 5, delay: float
                     # Fallback for models without get_q_values method
                     q_values = model(obs_tensor)
                 action = q_values.argmax(dim=1).item()
-            if game == 'asteroids': # disable DOWN and DOWNFIRE
+            if game == 'asteroids': # disable DOWN and DOWNFIRE so ship doesn't disappear
                 if action in (5, 11):
                     action = 0 
             # Take action
@@ -104,6 +104,8 @@ def main():
                        help='Run without rendering (for evaluation)')
     parser.add_argument('--record-video', action='store_true',
                        help='Record video of the gameplay (will force render_mode rgb_array)')
+    parser.add_argument('--clip-reward', action='store_true',
+                        help='Clip rewards to [-1, 1] (default: False for evaluation)')
 
     args = parser.parse_args()
     
@@ -114,13 +116,14 @@ def main():
     # Create environment
     render_mode = "rgb_array" if args.no_render or args.record_video else "human"
     game: str = args.game.lower()
+    clip_reward: bool = args.clip_reward  # Use user-specified reward clipping
     if game.startswith('py-asteroids'):
         config_version = py_asteroids_name_id_map.get(game, game) # ex: py-asteroids or py-asteroids-v1
-        env = make_py_asteroids_env(action_mode="ale", config_version=config_version) 
+        env = make_py_asteroids_env(action_mode="ale", render_mode=render_mode, config_version=config_version, clip_reward=clip_reward) 
     else: 
         env_id = atari_name_id_map.get(game, game)
         try:
-            env = make_atari_env(env_id, render_mode=render_mode, clip_reward=False) # No reward clipping for evaluation
+            env = make_atari_env(env_id, render_mode=render_mode, clip_reward=clip_reward) # No reward clipping for evaluation
             print(f"🚀 Created Atari environment (without reward clipping): {env_id}")
         except Exception as e:
             raise ValueError(f"Unsupported game: {game}. Error: {e}")
