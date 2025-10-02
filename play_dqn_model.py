@@ -117,25 +117,33 @@ def main():
     render_mode = "rgb_array" if args.no_render or args.record_video else "human"
     game: str = args.game.lower()
     clip_reward: bool = args.clip_reward  # Use user-specified reward clipping
+    # Use frame skip of 3 for some games for flickering issue, 4 for others
+    frame_skip = 3 if game in {'asteroids', 'spaceinvaders'} else 4  
     if game.startswith('py-asteroids'):
         config_version = py_asteroids_name_id_map.get(game, game) # ex: py-asteroids or py-asteroids-v1
         env = make_py_asteroids_env(action_mode="ale", render_mode=render_mode, config_version=config_version, clip_reward=clip_reward) 
     else: 
         env_id = atari_name_id_map.get(game, game)
         try:
-            env = make_atari_env(env_id, render_mode=render_mode, clip_reward=clip_reward) # No reward clipping for evaluation
+            env = make_atari_env(env_id, render_mode=render_mode, clip_reward=clip_reward, frame_skip=frame_skip) # No reward clipping for evaluation
             print(f"🚀 Created Atari environment (without reward clipping): {env_id}")
         except Exception as e:
             raise ValueError(f"Unsupported game: {game}. Error: {e}")
 
     if args.record_video:
-        from shared.wrappers import MaxRender
-        env = MaxRender(env) # Smooth rendering for Atari games (particularly ALE Asteroids)
+        if game in {'asteroids', 'spaceinvaders'}:
+            print('Enabling smooth rendering')
+            from shared.wrappers import MaxRender
+            env = MaxRender(env) # Smooth rendering for Atari games (particularly ALE Asteroids)
         name_prefix = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.game}"
-        if args.game == 'py-asteroids':
-           env.metadata["render_fps"] = 30
-        else:
-           env.metadata["render_fps"] = 10
+        # Assume default fps is 60, but with frame skip of 4 it's effectively 15 fps, make video at twice that to save viewing time
+        try:
+            env.metadata["render_fps"] = 2 * (env.metadata["render_fps"] // frame_skip)
+        except:
+            print("⚠️  No preset render_fps found, defaulting to 30 fps")
+            env.metadata["render_fps"] = 2 * 15
+        
+
         env = RecordVideo(env, video_folder="videos/", episode_trigger=lambda x: True, name_prefix=name_prefix)
         os.makedirs("videos/", exist_ok=True)
 
