@@ -22,7 +22,7 @@ from shared.utils import get_device
 from shared.experience import Experience, ExperienceBuffer
 from shared.prioritized_experience import PrioritizedExperienceBuffer
 from shared.model_config import ModelConfig  
-from shared.model_factory import create_model_from_config, save_model_checkpoint
+from shared.model_factory import create_model_from_config, save_model_checkpoint, load_model_checkpoint
 from shared.exploration_metrics import ExplorationMetrics
 
 
@@ -273,7 +273,7 @@ def get_default_config() -> dict:
     }
 
 
-def load_model(config: dict, net: nn.Module, tgt_net: nn.Module, device: str) -> bool:
+def load_model(config: dict, net: nn.Module, tgt_net: nn.Module, env, device: str) -> bool:
     """
     Load a pretrained model checkpoint into the networks.
     
@@ -281,6 +281,7 @@ def load_model(config: dict, net: nn.Module, tgt_net: nn.Module, device: str) ->
         config: Configuration dictionary
         net: Main network to load weights into
         tgt_net: Target network to load weights into
+        env: Environment (needed for legacy checkpoint compatibility)
         device: Device to load the model on
         
     Returns:
@@ -291,9 +292,18 @@ def load_model(config: dict, net: nn.Module, tgt_net: nn.Module, device: str) ->
         
     try:
         print(f"Loading model from: {config['load_model']}")
-        checkpoint = torch.load(config['load_model'], map_location=device)
-        net.load_state_dict(checkpoint)
-        tgt_net.load_state_dict(checkpoint)  # Start with same weights for target network
+        # Use the robust checkpoint loading from model_factory
+        loaded_model, model_config, training_info = load_model_checkpoint(config['load_model'], env, device)
+        
+        # Transfer weights to existing networks
+        net.load_state_dict(loaded_model.state_dict())
+        tgt_net.load_state_dict(loaded_model.state_dict())  # Start with same weights for target network
+        
+        # Display loaded model info
+        print(f"🏗️  Model Architecture: {model_config.get_architecture_name()}")
+        if training_info.get('frame_idx'):
+            print(f"📊 Loaded from training frame: {training_info['frame_idx']:,}")
+        
         print("✅ Model loaded successfully")
         return True
     except Exception as e:
@@ -534,7 +544,7 @@ def train(env, config):
     })
 
     # Load saved model to continue training
-    if not load_model(config, net, tgt_net, device):
+    if not load_model(config, net, tgt_net, env, device):
         return
     
     # Load replay buffer or generate initial experiences
