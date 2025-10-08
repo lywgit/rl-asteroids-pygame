@@ -161,7 +161,6 @@ n_step_learning: true
 - **Robust Error Handling**: Graceful failure modes and validation
 
 ### Performance Features
-- **Automatic Value Range Estimation**: Game-specific heuristics for distributional DQN
 - **Efficient Sampling**: O(log n) priority-based experience sampling
 - **Memory Optimized**: Buffer-based noise generation and circular buffer management
 - **Device Agnostic**: CPU, CUDA, and MPS (Apple Silicon) support
